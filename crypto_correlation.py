@@ -38,7 +38,7 @@ def get_top_coins(session=None):
     params = {
         "vs_currency": "usd",
         "order": "market_cap_desc",
-        "per_page": 15,  # Get more coins in case some are not available on Binance
+        "per_page": 30,  # Get more coins in case some are not available on Binance
         "page": 1,
         "sparkline": False
     }
@@ -59,23 +59,31 @@ def get_top_coins(session=None):
         if coin['market_cap'] is None or coin['market_cap'] < 1000000:  # $1M minimum
             continue
             
-        # Special handling for USDT since it's the quote currency
+        # Always add USDT since it's our base currency
         if symbol == 'USDT':
             coins.append((symbol, coin['market_cap']))
             continue
             
+        # For all other coins, check if they have a USDT trading pair
         try:
-            # For non-USDT coins, check if they have a USDT trading pair
             check_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
             response = session.get(check_url, timeout=10)
             response.raise_for_status()
             coins.append((symbol, coin['market_cap']))
             time.sleep(0.5)  # Rate limiting
         except requests.exceptions.RequestException:
-            logger.warning(f"Skipping {symbol} - not available on Binance")
-            continue
+            # If direct pair fails, try reverse pair (for stablecoins like USDC)
+            try:
+                check_url = f"https://api.binance.com/api/v3/ticker/price?symbol=USDT{symbol}"
+                response = session.get(check_url, timeout=10)
+                response.raise_for_status()
+                coins.append((symbol, coin['market_cap']))
+                time.sleep(0.5)  # Rate limiting
+            except requests.exceptions.RequestException:
+                logger.warning(f"Skipping {symbol} - not available on Binance")
+                continue
             
-        if len(coins) >= 10:  # Stop after finding 10 valid coins
+        if len(coins) >= 20:  # Stop after finding 20 valid coins
             break
             
     if not coins:
@@ -88,26 +96,21 @@ def get_historical_data(symbol, start_date, end_date, session=None):
     if session is None:
         session = create_session()
 
-    # Get valid quote currencies (excluding the symbol itself)
-    quote_currencies = ['USDT', 'USDC', 'BTC']
-    quote_currencies = [qc for qc in quote_currencies if qc != symbol]
-    
-    # Try all valid pairs
-    pairs_to_try = []
-    for quote in quote_currencies:
-        pairs_to_try.extend([
-            (f"{symbol}{quote}", False),
-            (f"{quote}{symbol}", True)
-        ])
+    # If symbol is USDT, we need to handle it specially since it's our base
+    if symbol == 'USDT':
+        raise Exception("USDT data should be derived from the other coin in the pair")
+
+    # For all other coins, try both directions
+    pairs_to_try = [
+        (f"{symbol}USDT", False),
+        (f"USDT{symbol}", True)
+    ]
     
     last_error = None
     for trading_pair, should_invert in pairs_to_try:
         try:
             df = _fetch_historical_data(trading_pair, start_date, end_date, session)
-            # Invert if it's a USDC pair to match USDT direction
-            if 'USDC' in trading_pair:
-                df['close'] = 1 / df['close']
-            elif should_invert:
+            if should_invert:
                 df['close'] = 1 / df['close']
             return df
         except Exception as e:
@@ -192,6 +195,9 @@ def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap
         if not -1 <= correlation <= 1:
             raise Exception("Invalid correlation value")
             
+        # Normalize correlation to always be positive
+        correlation = abs(correlation)
+            
         # Calculate total returns for the timeframe
         total_return_1 = ((coin1_prices.iloc[-1] - coin1_prices.iloc[0]) / coin1_prices.iloc[0]) * 100
         total_return_2 = ((coin2_prices.iloc[-1] - coin2_prices.iloc[0]) / coin2_prices.iloc[0]) * 100
@@ -221,6 +227,15 @@ def format_market_cap(value):
         logger.error(f"Error formatting market cap: {str(e)}")
         return "N/A"
 
+def get_usdt_data(start_date, end_date, session):
+    """Get USDT price data using USDC as reference"""
+    try:
+        df = _fetch_historical_data('USDCUSDT', start_date, end_date, session)
+        df['close'] = 1 / df['close']  # Invert to get USDT/USDC
+        return df
+    except Exception as e:
+        raise Exception(f"Could not get USDT data via USDC: {str(e)}")
+
 def process_pair(pair_data, session=None):
     """Process a single pair of coins for all timeframes"""
     if session is None:
@@ -231,10 +246,17 @@ def process_pair(pair_data, session=None):
     end_date = datetime.now()
     
     try:
-        # Fetch data once for the full year
-        coin1_data = get_historical_data(coin1, start_date, end_date, session)
-        time.sleep(1)  # Rate limiting
-        coin2_data = get_historical_data(coin2, start_date, end_date, session)
+        # Get data for each coin
+        if coin1 == 'USDT':
+            coin1_data = get_usdt_data(start_date, end_date, session)
+            coin2_data = get_historical_data(coin2, start_date, end_date, session)
+        elif coin2 == 'USDT':
+            coin1_data = get_historical_data(coin1, start_date, end_date, session)
+            coin2_data = get_usdt_data(start_date, end_date, session)
+        else:
+            coin1_data = get_historical_data(coin1, start_date, end_date, session)
+            time.sleep(1)  # Rate limiting
+            coin2_data = get_historical_data(coin2, start_date, end_date, session)
         
         # Calculate metrics for each timeframe
         timeframes = {
@@ -294,16 +316,22 @@ def main():
             '365d': []
         }
         
+        # Track skipped pairs
+        skipped_pairs = []
+        
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_pair = {executor.submit(process_pair, pair, session): pair for pair in pairs}
             
             with tqdm(total=total_pairs, desc="Processing pairs") as pbar:
                 for future in as_completed(future_to_pair):
+                    pair = future_to_pair[future]
                     results = future.result()
                     if results:
                         for period, result in results.items():
                             if result:
                                 timeframe_results[period].append(result)
+                    else:
+                        skipped_pairs.append(f"{pair[0][0]}-{pair[1][0]}")
                     pbar.update(1)
         
         # Create and save results for each timeframe
@@ -324,6 +352,12 @@ def main():
             pd.set_option('display.max_columns', None)
             pd.set_option('display.width', None)
             print(df_results.head().to_string())
+        
+        # Display skipped pairs
+        if skipped_pairs:
+            print("\nSkipped pairs:")
+            for pair in sorted(skipped_pairs):
+                print(pair)
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
