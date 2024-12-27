@@ -11,6 +11,7 @@ import {
   FormControl,
   InputLabel,
   TextField,
+  Pagination,
 } from '@mui/material';
 import Papa from 'papaparse';
 
@@ -26,6 +27,47 @@ const minimalTheme = createTheme({
   typography: {
     fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
   },
+  components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        body: {
+          // Webkit browsers (Chrome, Safari, Edge)
+          '&::-webkit-scrollbar': {
+            width: '10px',
+            height: '10px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: '#1E1E1E',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: '#3D3D3D',
+            borderRadius: '5px',
+            '&:hover': {
+              background: '#4D4D4D',
+            },
+          },
+          // Firefox
+          scrollbarWidth: 'thin',
+          scrollbarColor: '#3D3D3D #1E1E1E',
+        },
+        // Horizontal scrollbar for the table
+        '*::-webkit-scrollbar': {
+          width: '10px',
+          height: '10px',
+        },
+        '*::-webkit-scrollbar-track': {
+          background: '#1E1E1E',
+        },
+        '*::-webkit-scrollbar-thumb': {
+          background: '#3D3D3D',
+          borderRadius: '5px',
+          '&:hover': {
+            background: '#4D4D4D',
+          },
+        },
+      },
+    },
+  },
 });
 
 // Timeframe options
@@ -38,6 +80,8 @@ function App() {
   const [order, setOrder] = useState('desc');
   const [correlationFilter, setCorrelationFilter] = useState(0.9);
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const entriesPerPage = 100;
 
   useEffect(() => {
     // Load all CSV files from root directory
@@ -128,6 +172,10 @@ function App() {
     });
   };
 
+  const handlePageChange = (event, newPage) => {
+    setPage(newPage);
+  };
+
   const currentData = correlationData[currentTimeframe] || [];
   // Filter out empty rows before sorting
   const filteredData = currentData.filter(row => 
@@ -139,6 +187,11 @@ function App() {
   const correlationFilteredData = filterByCorrelation(filteredData);
   const searchFilteredData = filterBySearch(correlationFilteredData);
   const sortedData = sortData([...searchFilteredData]);
+  
+  // Calculate pagination
+  const totalPages = Math.ceil(sortedData.length / entriesPerPage);
+  const startIndex = (page - 1) * entriesPerPage;
+  const paginatedData = sortedData.slice(startIndex, startIndex + entriesPerPage);
 
   return (
     <ThemeProvider theme={minimalTheme}>
@@ -155,13 +208,25 @@ function App() {
           component="h1" 
           align="center" 
           sx={{ 
-            mb: 5,
+            mb: 2,
             fontSize: '2rem',
             fontWeight: 500,
             color: '#fff',
           }}
         >
-          Crypto Correlations
+          Best Pairs for Liquidity
+        </Typography>
+
+        <Typography 
+          variant="subtitle1" 
+          align="center" 
+          sx={{ 
+            mb: 5,
+            color: '#888',
+            fontSize: '1rem',
+          }}
+        >
+          Find highly correlated cryptocurrency pairs sorted by market cap and price movement
         </Typography>
 
         <Box 
@@ -290,7 +355,7 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {sortedData.map((row, index) => (
+              {paginatedData.map((row, index) => (
                 <tr 
                   key={index}
                   style={{
@@ -340,6 +405,62 @@ function App() {
             </tbody>
           </table>
         </Box>
+
+        {totalPages > 1 && (
+          <Box 
+            sx={{ 
+              mt: 4, 
+              display: 'flex', 
+              justifyContent: 'center',
+              '& .MuiPagination-ul': {
+                '& .MuiPaginationItem-root': {
+                  color: '#fff',
+                  '&.Mui-selected': {
+                    backgroundColor: '#3D3D3D',
+                  },
+                  '&:hover': {
+                    backgroundColor: '#4D4D4D',
+                  },
+                },
+              },
+            }}
+          >
+            <Pagination 
+              count={totalPages} 
+              page={page} 
+              onChange={handlePageChange}
+              color="primary"
+              size="large"
+            />
+          </Box>
+        )}
+
+        <Typography 
+          variant="body2" 
+          sx={{ 
+            mt: 2,
+            textAlign: 'center',
+            color: '#666',
+          }}
+        >
+          Showing {startIndex + 1}-{Math.min(startIndex + entriesPerPage, sortedData.length)} of {sortedData.length} entries
+        </Typography>
+
+        <Typography 
+          variant="body2" 
+          sx={{ 
+            mt: 4,
+            mb: 2,
+            textAlign: 'center',
+            color: '#666',
+            '& span': {
+              color: '#3B82F6', // Blue heart color
+              fontWeight: 'bold',
+            }
+          }}
+        >
+          Made with <span>❤</span> by Vaas
+        </Typography>
       </Container>
     </ThemeProvider>
   );
