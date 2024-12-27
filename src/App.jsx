@@ -10,6 +10,7 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  TextField,
 } from '@mui/material';
 import Papa from 'papaparse';
 
@@ -36,11 +37,12 @@ function App() {
   const [orderBy, setOrderBy] = useState('Correlation');
   const [order, setOrder] = useState('desc');
   const [correlationFilter, setCorrelationFilter] = useState(0.9);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    // Load all CSV files
+    // Load all CSV files from root directory
     Promise.all(timeframes.map(timeframe => 
-      fetch(`/crypto_correlations_${timeframe}.csv`)
+      fetch(`../crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });
@@ -108,6 +110,24 @@ function App() {
     });
   };
 
+  const filterBySearch = (data) => {
+    if (!searchQuery) return data;
+    const query = searchQuery.toLowerCase().trim();
+    
+    // Split the search query to handle multiple coins
+    const searchTerms = query.split(/[-\s]+/).filter(Boolean);
+    
+    return data.filter(row => {
+      const pairLower = row.Pair.toLowerCase();
+      // If searching for multiple terms, all must match
+      if (searchTerms.length > 1) {
+        return searchTerms.every(term => pairLower.includes(term));
+      }
+      // Single term search
+      return pairLower.includes(query);
+    });
+  };
+
   const currentData = correlationData[currentTimeframe] || [];
   // Filter out empty rows before sorting
   const filteredData = currentData.filter(row => 
@@ -117,7 +137,8 @@ function App() {
     row['Combined Change %']
   );
   const correlationFilteredData = filterByCorrelation(filteredData);
-  const sortedData = sortData([...correlationFilteredData]);
+  const searchFilteredData = filterBySearch(correlationFilteredData);
+  const sortedData = sortData([...searchFilteredData]);
 
   return (
     <ThemeProvider theme={minimalTheme}>
@@ -205,6 +226,29 @@ function App() {
               <MenuItem value={0}>All</MenuItem>
             </Select>
           </FormControl>
+
+          <TextField
+            size="small"
+            placeholder="Search pairs..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{
+              minWidth: 200,
+              '& .MuiOutlinedInput-root': {
+                color: '#fff',
+                '& fieldset': {
+                  borderColor: '#666',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#888',
+                },
+                '& input::placeholder': {
+                  color: '#888',
+                  opacity: 1,
+                },
+              },
+            }}
+          />
         </Box>
 
         <Box sx={{ overflowX: 'auto' }}>

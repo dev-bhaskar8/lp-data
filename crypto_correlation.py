@@ -9,6 +9,11 @@ from tqdm import tqdm
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(
@@ -16,6 +21,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# CoinGecko API Configuration
+COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
+if not COINGECKO_API_KEY:
+    raise ValueError("COINGECKO_API_KEY not found in environment variables. Please check your .env file.")
+COINGECKO_API_URL = "https://api.coingecko.com/api/v3"
 
 def create_session():
     """Create a requests session with retries"""
@@ -27,49 +38,62 @@ def create_session():
     )
     session.mount('http://', HTTPAdapter(max_retries=retries))
     session.mount('https://', HTTPAdapter(max_retries=retries))
+    # Update headers for CoinGecko API
+    session.headers.update({
+        "x-cg-demo-api-key": COINGECKO_API_KEY
+    })
     return session
 
 def get_top_coins(session=None):
     """Get top coins by market cap from CoinGecko"""
     if session is None:
         session = create_session()
-        
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        "vs_currency": "usd",
-        "order": "market_cap_desc",
-        "per_page": 100,
-        "page": 1,
-        "sparkline": False
-    }
-    
-    try:
-        response = session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        time.sleep(1)  # Rate limiting for CoinGecko
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching data from CoinGecko: {str(e)}")
-        raise
     
     coins = []
+    page = 1
+    coins_per_page = 100  # CoinGecko's max per page
     
-    for coin in data:
-        symbol = coin['symbol'].upper()
+    while len(coins) < 300 and page <= 3:  # We need 3 pages to get 300 coins
+        url = f"{COINGECKO_API_URL}/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": coins_per_page,
+            "page": page,
+            "sparkline": "false"
+        }
         
-        # Skip coins with very low market cap
-        if coin['market_cap'] is None or coin['market_cap'] < 1000000:  # $1M minimum
-            continue
+        try:
+            response = session.get(url, params=params, timeout=10)
+            if response.status_code == 400:
+                logger.error(f"API Error Response: {response.text}")
+            response.raise_for_status()
+            data = response.json()
             
-        coins.append((symbol, coin['market_cap']))
-        
-        if len(coins) >= 50:  # Stop after finding 50 valid coins
-            break
+            for coin in data:
+                symbol = coin['symbol'].upper()
+                
+                # Skip coins with very low market cap
+                if coin['market_cap'] is None or coin['market_cap'] < 1000000:  # $1M minimum
+                    continue
+                    
+                coins.append((symbol, coin['market_cap']))
+                
+                if len(coins) >= 300:  # Stop after finding 300 valid coins
+                    break
             
+            page += 1
+            time.sleep(0.5)  # Increased delay between pages to respect rate limits
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching data from CoinGecko: {str(e)}")
+            raise
+    
     if not coins:
         raise Exception("No valid coins found")
-        
-    return coins
+    
+    logger.info(f"Successfully fetched {len(coins)} coins")
+    return coins[:300]  # Ensure we don't return more than 300 coins
 
 def get_historical_data(symbol, start_date, end_date, session=None):
     """Get historical price data from Binance with CoinGecko fallback"""
@@ -147,53 +171,62 @@ def _fetch_historical_data(trading_pair, start_date, end_date, session):
 
 def _fetch_coingecko_data(symbol, start_date, end_date, session):
     """Fetch historical data from CoinGecko"""
-    try:
-        # Get coin ID first
-        url = "https://api.coingecko.com/api/v3/coins/list"
-        response = session.get(url, timeout=10)
-        response.raise_for_status()
-        time.sleep(2)  # Increased delay for CoinGecko rate limit
-        coins = response.json()
-        
-        # Find the coin ID (case-insensitive match)
-        coin_id = None
-        for coin in coins:
-            if coin['symbol'].upper() == symbol.upper():
-                coin_id = coin['id']
-                break
-        
-        if not coin_id:
-            raise Exception(f"Could not find CoinGecko ID for {symbol}")
-        
-        # Get historical data
-        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
-        params = {
-            "vs_currency": "usd",
-            "from": int(start_date.timestamp()),
-            "to": int(end_date.timestamp())
-        }
-        
-        time.sleep(2)  # Additional delay before market data request
-        response = session.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Convert to DataFrame
-        prices = data['prices']
-        df = pd.DataFrame(prices, columns=['timestamp', 'close'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        
-        # Resample to daily data to match Binance format
-        df = df.resample('D').last()
-        
-        return df
-    except requests.exceptions.RequestException as e:
-        if "429" in str(e):
-            logger.warning(f"Rate limit hit for {symbol}, waiting 60 seconds...")
-            time.sleep(60)  # Wait longer on rate limit
-            raise Exception(f"Rate limit exceeded for {symbol}")
-        raise
+    max_retries = 5
+    base_delay = 5  # Start with 5 seconds delay
+    
+    for attempt in range(max_retries):
+        try:
+            # Get coin ID first
+            url = f"{COINGECKO_API_URL}/coins/list"
+            response = session.get(url, timeout=10)
+            response.raise_for_status()
+            time.sleep(1)  # Consistent delay between API calls
+            coins = response.json()
+            
+            # Find the coin ID (case-insensitive match)
+            coin_id = None
+            for coin in coins:
+                if coin['symbol'].upper() == symbol.upper():
+                    coin_id = coin['id']
+                    break
+            
+            if not coin_id:
+                raise Exception(f"Could not find CoinGecko ID for {symbol}")
+            
+            # Get historical data
+            url = f"{COINGECKO_API_URL}/coins/{coin_id}/market_chart/range"
+            params = {
+                "vs_currency": "usd",
+                "from": int(start_date.timestamp()),
+                "to": int(end_date.timestamp())
+            }
+            
+            time.sleep(1)  # Consistent delay between API calls
+            response = session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Convert to DataFrame
+            prices = data['prices']
+            df = pd.DataFrame(prices, columns=['timestamp', 'close'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # Resample to daily data to match Binance format
+            df = df.resample('D').last()
+            
+            return df
+            
+        except requests.exceptions.RequestException as e:
+            delay = base_delay * (2 ** attempt)  # Exponential backoff
+            if attempt < max_retries - 1:  # Don't log on last attempt
+                if "429" in str(e):
+                    logger.warning(f"Rate limit hit for {symbol}, waiting {delay} seconds (attempt {attempt + 1}/{max_retries})...")
+                else:
+                    logger.warning(f"Error fetching {symbol}, waiting {delay} seconds (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                time.sleep(delay)
+            else:
+                raise  # Re-raise the exception on last attempt
 
 def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap, timeframe_days):
     """Calculate correlation and other metrics between two coins for a specific timeframe"""
@@ -326,56 +359,78 @@ def get_historical_data_parallel(symbols, start_date, end_date, session=None):
     if session is None:
         session = create_session()
 
-    def fetch_single_coin(symbol):
+    def fetch_single_coin_binance(symbol):
         try:
             if symbol == 'USDT':
-                try:
-                    df = _fetch_historical_data('USDCUSDT', start_date, end_date, session)
-                    df['close'] = 1 / df['close']
-                    df.name = symbol
-                    return symbol, df, None
-                except Exception as e:
-                    logger.warning(f"Binance fetch failed for USDT, trying CoinGecko after delay...")
-                    time.sleep(2)  # Wait before trying CoinGecko
-                    try:
-                        df = _fetch_coingecko_data(symbol, start_date, end_date, session)
-                        df.name = symbol
-                        return symbol, df, None
-                    except Exception as e2:
-                        return symbol, None, f"Failed to get USDT data: Binance: {str(e)}, CoinGecko: {str(e2)}"
-            
-            try:
+                df = _fetch_historical_data('USDCUSDT', start_date, end_date, session)
+                df['close'] = 1 / df['close']
+                df.name = symbol
+                return symbol, df, None
+            else:
                 df = _fetch_historical_data(f"{symbol}USDT", start_date, end_date, session)
                 df.name = symbol
                 return symbol, df, None
-            except Exception as e:
-                logger.warning(f"Binance fetch failed for {symbol}, trying CoinGecko after delay...")
-                time.sleep(2)  # Wait before trying CoinGecko
-                try:
-                    df = _fetch_coingecko_data(symbol, start_date, end_date, session)
-                    df.name = symbol
-                    return symbol, df, None
-                except Exception as e2:
-                    return symbol, None, f"Failed to get {symbol} data: Binance: {str(e)}, CoinGecko: {str(e2)}"
+        except Exception as e:
+            return symbol, None, str(e)
+
+    def fetch_single_coin_coingecko(symbol):
+        try:
+            df = _fetch_coingecko_data(symbol, start_date, end_date, session)
+            df.name = symbol
+            return symbol, df, None
         except Exception as e:
             return symbol, None, str(e)
 
     results = {}
     errors = {}
     
-    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced concurrent requests
-        future_to_symbol = {executor.submit(fetch_single_coin, symbol): symbol for symbol, _ in symbols}
-        for future in tqdm(as_completed(future_to_symbol), total=len(symbols), desc="Fetching historical data"):
-            symbol = future_to_symbol[future]
+    # Create two separate thread pools for Binance and CoinGecko
+    with ThreadPoolExecutor(max_workers=3) as binance_executor, \
+         ThreadPoolExecutor(max_workers=3) as coingecko_executor:
+        
+        # Submit all Binance requests first
+        binance_futures = {
+            binance_executor.submit(fetch_single_coin_binance, symbol): symbol 
+            for symbol, _ in symbols
+        }
+        
+        # Create a dict to track which symbols need CoinGecko fallback
+        need_coingecko = set()
+        
+        # Process Binance results with its own progress bar
+        print("\nFetching from Binance:")
+        for future in tqdm(as_completed(binance_futures), total=len(symbols), desc="Binance API"):
+            symbol = binance_futures[future]
             try:
                 symbol, df, error = future.result()
                 if df is not None:
                     results[symbol] = df
-                if error:
-                    errors[symbol] = error
+                else:
+                    need_coingecko.add(symbol)
             except Exception as e:
-                errors[symbol] = str(e)
-            time.sleep(0.5)  # Increased delay between requests
+                need_coingecko.add(symbol)
+            time.sleep(0.1)  # Rate limiting for Binance
+        
+        if need_coingecko:
+            # Submit CoinGecko requests for failed Binance fetches
+            coingecko_futures = {
+                coingecko_executor.submit(fetch_single_coin_coingecko, symbol): symbol 
+                for symbol in need_coingecko
+            }
+            
+            # Process CoinGecko results with its own progress bar
+            print("\nFetching from CoinGecko (fallback):")
+            for future in tqdm(as_completed(coingecko_futures), total=len(need_coingecko), desc="CoinGecko API"):
+                symbol = coingecko_futures[future]
+                try:
+                    symbol, df, error = future.result()
+                    if df is not None:
+                        results[symbol] = df
+                    else:
+                        errors[symbol] = error or "Unknown error"
+                except Exception as e:
+                    errors[symbol] = str(e)
+                time.sleep(0.5)  # Rate limiting for CoinGecko
             
     return results, errors
 
@@ -451,8 +506,14 @@ def main():
         
         # Process successful results
         for symbol, df in coin_data_results.items():
-            mcap = next(m for s, m in top_coins if s == symbol)
-            all_coin_data[symbol] = {'data': df, 'mcap': mcap}
+            if df is not None and not df.empty and len(df) > 0:
+                mcap = next(m for s, m in top_coins if s == symbol)
+                all_coin_data[symbol] = {'data': df, 'mcap': mcap}
+            else:
+                logger.warning(f"Skipping {symbol} due to empty data")
+        
+        if not all_coin_data:
+            raise ValueError("No valid historical data found for any coins")
         
         # Process timeframes
         timeframes = {
@@ -465,7 +526,17 @@ def main():
         all_returns = {}
         for symbol, coin_info in all_coin_data.items():
             df = coin_info['data']
-            all_returns[symbol] = df['close'].pct_change().dropna()
+            try:
+                returns = df['close'].pct_change(fill_method=None).dropna()
+                if len(returns) > 0:  # Only include if we have valid returns
+                    all_returns[symbol] = returns
+                else:
+                    logger.warning(f"Skipping {symbol} due to insufficient return data")
+            except Exception as e:
+                logger.warning(f"Error calculating returns for {symbol}: {str(e)}")
+        
+        if not all_returns:
+            raise ValueError("No valid return data calculated for any coins")
         
         # Process each timeframe
         for period, config in timeframes.items():
@@ -475,23 +546,21 @@ def main():
             
             # Filter returns for this timeframe
             period_start = datetime.now() - timedelta(days=days)
-            returns_data = {
-                symbol: returns[returns.index >= period_start]
-                for symbol, returns in all_returns.items()
-            }
+            returns_data = {}
+            for symbol, returns in all_returns.items():
+                filtered_returns = returns[returns.index >= period_start]
+                if len(filtered_returns) >= required_points:
+                    returns_data[symbol] = filtered_returns
+            
+            if not returns_data:
+                logger.warning(f"No valid data for {period} timeframe")
+                continue
             
             # Track coins without enough data
             coins_without_enough_data = {
                 symbol: f"insufficient_data({len(returns)}/{required_points})"
-                for symbol, returns in returns_data.items()
-                if len(returns) < required_points
-            }
-            
-            # Remove coins without enough data
-            returns_data = {
-                symbol: returns
-                for symbol, returns in returns_data.items()
-                if len(returns) >= required_points
+                for symbol, returns in all_returns.items()
+                if symbol not in returns_data
             }
             
             # Calculate correlations efficiently
@@ -527,7 +596,10 @@ def main():
                 pd.set_option('display.max_columns', None)
                 pd.set_option('display.width', None)
                 valid_results = df_results[~df_results['Correlation'].astype(str).str.startswith('err:')]
-                print(valid_results.head(10).to_string())
+                if not valid_results.empty:
+                    print(valid_results.head(10).to_string())
+                else:
+                    print("No valid correlations found")
                 
                 error_results = df_results[df_results['Correlation'].astype(str).str.startswith('err:')]
                 if not error_results.empty:
