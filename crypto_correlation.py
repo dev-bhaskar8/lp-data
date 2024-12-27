@@ -153,13 +153,22 @@ def _fetch_historical_data(trading_pair, start_date, end_date, session):
     
     return df[['close']]
 
-def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap):
-    """Calculate correlation and other metrics between two coins"""
+def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap, timeframe_days):
+    """Calculate correlation and other metrics between two coins for a specific timeframe"""
     try:
+        # Filter data for timeframe
+        end_date = coin1_data.index.max()
+        start_date = end_date - pd.Timedelta(days=timeframe_days)
+        
+        coin1_data = coin1_data[coin1_data.index >= start_date]
+        coin2_data = coin2_data[coin2_data.index >= start_date]
+        
         # Ensure both DataFrames have the same index
         common_dates = coin1_data.index.intersection(coin2_data.index)
-        if len(common_dates) < 30:  # Require at least 30 days of data
-            raise Exception("Insufficient data points for correlation calculation")
+        min_required_points = int(timeframe_days * 0.8)  # Require 80% of timeframe days
+        
+        if len(common_dates) < min_required_points:
+            raise Exception(f"Insufficient data points for {timeframe_days}-day correlation calculation (need {min_required_points}, got {len(common_dates)})")
         
         # Get data for common dates
         coin1_prices = coin1_data.loc[common_dates, 'close']
@@ -175,15 +184,15 @@ def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap
             'coin2': coin2_returns
         }).dropna()
         
-        if len(valid_data) < 30:
-            raise Exception("Insufficient data points after removing NaN values")
+        if len(valid_data) < min_required_points:
+            raise Exception(f"Insufficient data points after removing NaN values for {timeframe_days}-day period")
         
         # Calculate correlation using returns
         correlation = valid_data['coin1'].corr(valid_data['coin2'])
         if not -1 <= correlation <= 1:
             raise Exception("Invalid correlation value")
             
-        # Calculate total returns
+        # Calculate total returns for the timeframe
         total_return_1 = ((coin1_prices.iloc[-1] - coin1_prices.iloc[0]) / coin1_prices.iloc[0]) * 100
         total_return_2 = ((coin2_prices.iloc[-1] - coin2_prices.iloc[0]) / coin2_prices.iloc[0]) * 100
         combined_change = (total_return_1 + total_return_2) / 2
@@ -213,7 +222,7 @@ def format_market_cap(value):
         return "N/A"
 
 def process_pair(pair_data, session=None):
-    """Process a single pair of coins"""
+    """Process a single pair of coins for all timeframes"""
     if session is None:
         session = create_session()
         
@@ -222,20 +231,38 @@ def process_pair(pair_data, session=None):
     end_date = datetime.now()
     
     try:
+        # Fetch data once for the full year
         coin1_data = get_historical_data(coin1, start_date, end_date, session)
         time.sleep(1)  # Rate limiting
         coin2_data = get_historical_data(coin2, start_date, end_date, session)
         
-        correlation, combined_change, combined_mcap = calculate_correlation_metrics(
-            coin1_data, coin2_data, mcap1, mcap2
-        )
-        
-        return {
-            'Pair': f"{coin1}-{coin2}",
-            'Correlation': round(correlation, 4),
-            'Combined Market Cap': format_market_cap(combined_mcap),
-            'Combined Yearly Change %': round(combined_change, 2)
+        # Calculate metrics for each timeframe
+        timeframes = {
+            '7d': 7,
+            '30d': 30,
+            '90d': 90,
+            '180d': 180,
+            '365d': 365
         }
+        
+        results = {}
+        for period, days in timeframes.items():
+            try:
+                correlation, combined_change, combined_mcap = calculate_correlation_metrics(
+                    coin1_data, coin2_data, mcap1, mcap2, days
+                )
+                
+                results[period] = {
+                    'Pair': f"{coin1}-{coin2}",
+                    'Correlation': round(correlation, 4),
+                    'Combined Market Cap': format_market_cap(combined_mcap),
+                    'Combined Change %': round(combined_change, 2)
+                }
+            except Exception as e:
+                logger.warning(f"Could not calculate {period} metrics for {coin1}-{coin2}: {str(e)}")
+                results[period] = None
+        
+        return results
     except Exception as e:
         logger.error(f"Error processing pair {coin1}-{coin2}: {str(e)}")
         return None
@@ -258,33 +285,45 @@ def main():
         total_pairs = len(pairs)
         logger.info(f"Calculating correlations for {total_pairs} pairs using parallel processing...")
         
-        results = []
+        # Dictionary to store results for each timeframe
+        timeframe_results = {
+            '7d': [],
+            '30d': [],
+            '90d': [],
+            '180d': [],
+            '365d': []
+        }
+        
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_pair = {executor.submit(process_pair, pair, session): pair for pair in pairs}
             
             with tqdm(total=total_pairs, desc="Processing pairs") as pbar:
                 for future in as_completed(future_to_pair):
-                    result = future.result()
-                    if result:
-                        results.append(result)
+                    results = future.result()
+                    if results:
+                        for period, result in results.items():
+                            if result:
+                                timeframe_results[period].append(result)
                     pbar.update(1)
         
-        if not results:
-            raise Exception("No valid results were obtained")
-        
-        # Create and save results
-        df_results = pd.DataFrame(results)
-        df_results = df_results.sort_values('Correlation', ascending=False)
-        
-        output_file = 'crypto_correlations.csv'
-        df_results.to_csv(output_file, index=False)
-        logger.info(f"Results saved to {output_file}")
-        
-        # Display top correlations
-        print("\nTop 5 most correlated pairs:")
-        pd.set_option('display.max_columns', None)
-        pd.set_option('display.width', None)
-        print(df_results.head().to_string())
+        # Create and save results for each timeframe
+        for period, results in timeframe_results.items():
+            if not results:
+                logger.warning(f"No valid results for {period}")
+                continue
+                
+            df_results = pd.DataFrame(results)
+            df_results = df_results.sort_values('Correlation', ascending=False)
+            
+            output_file = f'crypto_correlations_{period}.csv'
+            df_results.to_csv(output_file, index=False)
+            logger.info(f"Results saved to {output_file}")
+            
+            # Display top correlations for each timeframe
+            print(f"\nTop 5 most correlated pairs ({period}):")
+            pd.set_option('display.max_columns', None)
+            pd.set_option('display.width', None)
+            print(df_results.head().to_string())
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
