@@ -2,7 +2,7 @@ name: Update Correlation Data
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Runs every 6 hours
+    - cron: '0 0 */4 * *'  # Runs every 4 days at midnight UTC
   workflow_dispatch:  # Allows manual trigger
 
 jobs:
