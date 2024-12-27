@@ -84,9 +84,9 @@ function App() {
   const entriesPerPage = 100;
 
   useEffect(() => {
-    // Load CSV files from GitHub Pages assets directory
+    // Load CSV files from root directory
     Promise.all(timeframes.map(timeframe => 
-      fetch(`https://dev-bhaskar8.github.io/lp-data/assets/crypto_correlations_${timeframe}.csv`)
+      fetch(`/lp-data/crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });
