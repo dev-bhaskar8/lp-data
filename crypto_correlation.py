@@ -38,7 +38,7 @@ def get_top_coins(session=None):
     params = {
         "vs_currency": "usd",
         "order": "market_cap_desc",
-        "per_page": 30,  # Get more coins in case some are not available on Binance
+        "per_page": 100,  # Get more coins in case some are not available on Binance
         "page": 1,
         "sparkline": False
     }
@@ -47,11 +47,14 @@ def get_top_coins(session=None):
         response = session.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
+        time.sleep(1)  # Rate limiting for CoinGecko
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching data from CoinGecko: {str(e)}")
         raise
     
     coins = []
+    stablecoins = {'USDT', 'USDC', 'BUSD', 'DAI', 'USDS', 'TUSD', 'USDP'}  # Known stablecoins
+    
     for coin in data:
         symbol = coin['symbol'].upper()
         
@@ -59,31 +62,32 @@ def get_top_coins(session=None):
         if coin['market_cap'] is None or coin['market_cap'] < 1000000:  # $1M minimum
             continue
             
-        # Always add USDT since it's our base currency
-        if symbol == 'USDT':
+        # Always include stablecoins if they meet market cap requirement
+        if symbol in stablecoins:
             coins.append((symbol, coin['market_cap']))
             continue
             
-        # For all other coins, check if they have a USDT trading pair
+        # For non-stablecoins, check if they have a trading pair
         try:
+            # Try USDT pair first
             check_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}USDT"
             response = session.get(check_url, timeout=10)
             response.raise_for_status()
             coins.append((symbol, coin['market_cap']))
-            time.sleep(0.5)  # Rate limiting
+            time.sleep(0.75)  # Rate limiting for Binance
         except requests.exceptions.RequestException:
-            # If direct pair fails, try reverse pair (for stablecoins like USDC)
             try:
-                check_url = f"https://api.binance.com/api/v3/ticker/price?symbol=USDT{symbol}"
+                # Try BUSD pair as fallback
+                check_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}BUSD"
                 response = session.get(check_url, timeout=10)
                 response.raise_for_status()
                 coins.append((symbol, coin['market_cap']))
-                time.sleep(0.5)  # Rate limiting
+                time.sleep(0.75)  # Rate limiting for Binance
             except requests.exceptions.RequestException:
                 logger.warning(f"Skipping {symbol} - not available on Binance")
                 continue
             
-        if len(coins) >= 20:  # Stop after finding 20 valid coins
+        if len(coins) >= 50:  # Stop after finding 50 valid coins
             break
             
     if not coins:
@@ -92,33 +96,40 @@ def get_top_coins(session=None):
     return coins
 
 def get_historical_data(symbol, start_date, end_date, session=None):
-    """Get historical price data from Binance"""
+    """Get historical price data from Binance or CoinGecko"""
     if session is None:
         session = create_session()
 
-    # If symbol is USDT, we need to handle it specially since it's our base
+    # Special handling for USDT
     if symbol == 'USDT':
-        raise Exception("USDT data should be derived from the other coin in the pair")
-
-    # For all other coins, try both directions
-    pairs_to_try = [
-        (f"{symbol}USDT", False),
-        (f"USDT{symbol}", True)
-    ]
-    
-    last_error = None
-    for trading_pair, should_invert in pairs_to_try:
         try:
-            df = _fetch_historical_data(trading_pair, start_date, end_date, session)
-            if should_invert:
-                df['close'] = 1 / df['close']
+            # Get USDC/USDT data and invert it
+            df = _fetch_historical_data('USDCUSDT', start_date, end_date, session)
+            df['close'] = 1 / df['close']  # Invert to get USDT/USDC
+            df.name = symbol
             return df
         except Exception as e:
-            last_error = e
-            continue
-    
-    # If all pairs failed, raise the last error
-    raise Exception(f"Could not get data for {symbol} from any trading pair: {str(last_error)}")
+            # Fallback to CoinGecko
+            try:
+                df = _fetch_coingecko_data(symbol, start_date, end_date, session)
+                df.name = symbol
+                return df
+            except Exception as e2:
+                raise Exception(f"Could not get USDT data from either source: Binance: {str(e)}, CoinGecko: {str(e2)}")
+
+    # For all other coins, try Binance first
+    try:
+        df = _fetch_historical_data(f"{symbol}USDT", start_date, end_date, session)
+        df.name = symbol
+        return df
+    except Exception as e:
+        # For stablecoins and failed Binance requests, try CoinGecko
+        try:
+            df = _fetch_coingecko_data(symbol, start_date, end_date, session)
+            df.name = symbol
+            return df
+        except Exception as e2:
+            raise Exception(f"Could not get data for {symbol} from either source: Binance: {str(e)}, CoinGecko: {str(e2)}")
 
 def _fetch_historical_data(trading_pair, start_date, end_date, session):
     """Helper function to fetch historical data from Binance"""
@@ -156,6 +167,47 @@ def _fetch_historical_data(trading_pair, start_date, end_date, session):
     
     return df[['close']]
 
+def _fetch_coingecko_data(symbol, start_date, end_date, session):
+    """Fetch historical data from CoinGecko"""
+    # Get coin ID first
+    url = "https://api.coingecko.com/api/v3/coins/list"
+    response = session.get(url, timeout=10)
+    response.raise_for_status()
+    coins = response.json()
+    
+    # Find the coin ID (case-insensitive match)
+    coin_id = None
+    for coin in coins:
+        if coin['symbol'].upper() == symbol.upper():
+            coin_id = coin['id']
+            break
+    
+    if not coin_id:
+        raise Exception(f"Could not find CoinGecko ID for {symbol}")
+    
+    # Get historical data
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
+    params = {
+        "vs_currency": "usd",
+        "from": int(start_date.timestamp()),
+        "to": int(end_date.timestamp())
+    }
+    
+    response = session.get(url, params=params, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    
+    # Convert to DataFrame
+    prices = data['prices']
+    df = pd.DataFrame(prices, columns=['timestamp', 'close'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
+    
+    # Resample to daily data to match Binance format
+    df = df.resample('D').last()
+    
+    return df
+
 def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap, timeframe_days):
     """Calculate correlation and other metrics between two coins for a specific timeframe"""
     try:
@@ -168,7 +220,7 @@ def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap
         
         # Ensure both DataFrames have the same index
         common_dates = coin1_data.index.intersection(coin2_data.index)
-        min_required_points = int(timeframe_days * 0.8)  # Require 80% of timeframe days
+        min_required_points = int(timeframe_days * 0.7)  # Require 70% of timeframe days
         
         if len(common_dates) < min_required_points:
             raise Exception(f"Insufficient data points for {timeframe_days}-day correlation calculation (need {min_required_points}, got {len(common_dates)})")
@@ -246,17 +298,10 @@ def process_pair(pair_data, session=None):
     end_date = datetime.now()
     
     try:
-        # Get data for each coin
-        if coin1 == 'USDT':
-            coin1_data = get_usdt_data(start_date, end_date, session)
-            coin2_data = get_historical_data(coin2, start_date, end_date, session)
-        elif coin2 == 'USDT':
-            coin1_data = get_historical_data(coin1, start_date, end_date, session)
-            coin2_data = get_usdt_data(start_date, end_date, session)
-        else:
-            coin1_data = get_historical_data(coin1, start_date, end_date, session)
-            time.sleep(1)  # Rate limiting
-            coin2_data = get_historical_data(coin2, start_date, end_date, session)
+        # Get data for each coin against USDT
+        coin1_data = get_historical_data(coin1, start_date, end_date, session)
+        time.sleep(1)  # Rate limiting
+        coin2_data = get_historical_data(coin2, start_date, end_date, session)
         
         # Calculate metrics for each timeframe
         timeframes = {
@@ -302,62 +347,165 @@ def main():
         for symbol, mcap in top_coins:
             logger.info(f"{symbol}: {format_market_cap(mcap)}")
         
-        # Generate pairs and process
-        pairs = list(combinations(top_coins, 2))
-        total_pairs = len(pairs)
-        logger.info(f"Calculating correlations for {total_pairs} pairs using parallel processing...")
+        # Fetch historical data for all coins against USDT
+        logger.info("Fetching historical data for all coins...")
+        start_date = datetime.now() - timedelta(days=365)
+        end_date = datetime.now()
         
-        # Dictionary to store results for each timeframe
-        timeframe_results = {
-            '7d': [],
-            '30d': [],
-            '90d': [],
-            '180d': [],
-            '365d': []
+        all_coin_data = {}
+        skipped_coins = []
+        
+        for symbol, mcap in tqdm(top_coins, desc="Fetching USDT pairs"):
+            try:
+                df = get_historical_data(symbol, start_date, end_date, session)
+                all_coin_data[symbol] = {'data': df, 'mcap': mcap}
+                time.sleep(1)  # Rate limiting
+            except Exception as e:
+                logger.warning(f"Could not get data for {symbol}: {str(e)}")
+                skipped_coins.append(symbol)
+                continue
+        
+        # Calculate returns for all coins
+        logger.info("Calculating returns and correlations...")
+        timeframes = {
+            '7d': {'days': 7, 'threshold': 0.9},    # 90% for 7 days (need 6-7 days)
+            '30d': {'days': 30, 'threshold': 0.85},  # 85% for 30 days (need 26 days)
+            '90d': {'days': 90, 'threshold': 0.8},   # 80% for 90 days (need 72 days)
+            '180d': {'days': 180, 'threshold': 0.75}, # 75% for 180 days (need 135 days)
+            '365d': {'days': 365, 'threshold': 0.7}   # 70% for 365 days (need 256 days)
         }
         
-        # Track skipped pairs
-        skipped_pairs = []
-        
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_pair = {executor.submit(process_pair, pair, session): pair for pair in pairs}
+        # Process each timeframe
+        for period, config in timeframes.items():
+            results = []
+            days = config['days']
+            threshold = config['threshold']
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
             
-            with tqdm(total=total_pairs, desc="Processing pairs") as pbar:
-                for future in as_completed(future_to_pair):
-                    pair = future_to_pair[future]
-                    results = future.result()
-                    if results:
-                        for period, result in results.items():
-                            if result:
-                                timeframe_results[period].append(result)
+            # Get returns for all coins in this timeframe
+            returns_data = {}
+            coins_without_enough_data = {}  # Track coins and their data points
+            
+            for symbol, coin_info in all_coin_data.items():
+                df = coin_info['data']
+                df = df[df.index >= start_date]
+                if len(df) > 0:
+                    returns = df['close'].pct_change().dropna()
+                    required_points = int(days * threshold)
+                    if len(returns) >= required_points:
+                        returns_data[symbol] = returns
                     else:
-                        skipped_pairs.append(f"{pair[0][0]}-{pair[1][0]}")
-                    pbar.update(1)
-        
-        # Create and save results for each timeframe
-        for period, results in timeframe_results.items():
-            if not results:
-                logger.warning(f"No valid results for {period}")
-                continue
+                        coins_without_enough_data[symbol] = f"insufficient_data({len(returns)}/{required_points})"
+                else:
+                    coins_without_enough_data[symbol] = f"no_data"
+            
+            # Add all possible pairs with insufficient data to results
+            all_symbols = list(all_coin_data.keys())
+            for i, coin1 in enumerate(all_symbols):
+                for coin2 in all_symbols[i+1:]:
+                    pair = f"{coin1}-{coin2}"
+                    combined_mcap = all_coin_data[coin1]['mcap'] + all_coin_data[coin2]['mcap']
+                    
+                    # If either coin lacks data, add to results with error
+                    if coin1 in coins_without_enough_data:
+                        results.append({
+                            'Pair': pair,
+                            'Correlation': f"err:{coin1}_{coins_without_enough_data[coin1]}",
+                            'Combined Market Cap': format_market_cap(combined_mcap),
+                            'Combined Change %': None
+                        })
+                        continue
+                    elif coin2 in coins_without_enough_data:
+                        results.append({
+                            'Pair': pair,
+                            'Correlation': f"err:{coin2}_{coins_without_enough_data[coin2]}",
+                            'Combined Market Cap': format_market_cap(combined_mcap),
+                            'Combined Change %': None
+                        })
+                        continue
+            
+            # Calculate correlations between all pairs with sufficient data
+            symbols = list(returns_data.keys())
+            for i, coin1 in enumerate(symbols):
+                for coin2 in symbols[i+1:]:
+                    pair = f"{coin1}-{coin2}"
+                    try:
+                        # Align returns by date
+                        coin1_returns = returns_data[coin1]
+                        coin2_returns = returns_data[coin2]
+                        common_dates = coin1_returns.index.intersection(coin2_returns.index)
+                        required_points = int(days * threshold)
+                        
+                        if len(common_dates) >= required_points:
+                            # Calculate correlation
+                            correlation = abs(coin1_returns[common_dates].corr(coin2_returns[common_dates]))
+                            
+                            # Calculate returns over the period
+                            coin1_data = all_coin_data[coin1]['data'].loc[common_dates, 'close']
+                            coin2_data = all_coin_data[coin2]['data'].loc[common_dates, 'close']
+                            total_return_1 = ((coin1_data.iloc[-1] - coin1_data.iloc[0]) / coin1_data.iloc[0]) * 100
+                            total_return_2 = ((coin2_data.iloc[-1] - coin2_data.iloc[0]) / coin2_data.iloc[0]) * 100
+                            combined_change = (total_return_1 + total_return_2) / 2
+                            
+                            # Get market caps
+                            combined_mcap = all_coin_data[coin1]['mcap'] + all_coin_data[coin2]['mcap']
+                            
+                            results.append({
+                                'Pair': pair,
+                                'Correlation': round(correlation, 4),
+                                'Combined Market Cap': format_market_cap(combined_mcap),
+                                'Combined Change %': round(combined_change, 2)
+                            })
+                        else:
+                            results.append({
+                                'Pair': pair,
+                                'Correlation': f"err:overlap({len(common_dates)}/{required_points})",
+                                'Combined Market Cap': format_market_cap(combined_mcap),
+                                'Combined Change %': None
+                            })
+                    except Exception as e:
+                        results.append({
+                            'Pair': pair,
+                            'Correlation': f"err:calc({str(e)[:50]})",
+                            'Combined Market Cap': format_market_cap(combined_mcap),
+                            'Combined Change %': None
+                        })
+                        continue
+            
+            # Save results
+            if results:
+                df_results = pd.DataFrame(results)
+                # Sort with errors at the bottom
+                df_results['is_error'] = df_results['Correlation'].apply(lambda x: str(x).startswith('err:'))
+                df_results = df_results.sort_values(['is_error', 'Correlation'], ascending=[True, False])
+                df_results = df_results.drop('is_error', axis=1)
                 
-            df_results = pd.DataFrame(results)
-            df_results = df_results.sort_values('Correlation', ascending=False)
-            
-            output_file = f'crypto_correlations_{period}.csv'
-            df_results.to_csv(output_file, index=False)
-            logger.info(f"Results saved to {output_file}")
-            
-            # Display top correlations for each timeframe
-            print(f"\nTop 5 most correlated pairs ({period}):")
-            pd.set_option('display.max_columns', None)
-            pd.set_option('display.width', None)
-            print(df_results.head().to_string())
+                output_file = f'crypto_correlations_{period}.csv'
+                df_results.to_csv(output_file, index=False)
+                logger.info(f"Results saved to {output_file}")
+                
+                # Display top correlations
+                print(f"\nTop 10 most correlated pairs ({period}):")
+                pd.set_option('display.max_columns', None)
+                pd.set_option('display.width', None)
+                valid_results = df_results[~df_results['Correlation'].astype(str).str.startswith('err:')]
+                print(valid_results.head(10).to_string())
+                
+                # Display error summary
+                error_results = df_results[df_results['Correlation'].astype(str).str.startswith('err:')]
+                if not error_results.empty:
+                    print(f"\nError summary for {period} ({len(error_results)} pairs):")
+                    error_types = error_results['Correlation'].value_counts()
+                    print(error_types.head().to_string())
+            else:
+                logger.warning(f"No valid results for {period}")
         
-        # Display skipped pairs
-        if skipped_pairs:
-            print("\nSkipped pairs:")
-            for pair in sorted(skipped_pairs):
-                print(pair)
+        # Display skipped coins
+        if skipped_coins:
+            print("\nSkipped coins (failed to fetch data):")
+            for symbol in sorted(skipped_coins):
+                print(symbol)
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
