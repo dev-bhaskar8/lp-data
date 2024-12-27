@@ -84,9 +84,9 @@ function App() {
   const entriesPerPage = 100;
 
   useEffect(() => {
-    // Load all CSV files from root directory
+    // Load all CSV files from assets directory
     Promise.all(timeframes.map(timeframe => 
-      fetch(`../crypto_correlations_${timeframe}.csv`)
+      fetch(`/lp-data/assets/crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });

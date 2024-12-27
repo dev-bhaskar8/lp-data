@@ -7,10 +7,16 @@ export default defineConfig({
   base: '/lp-data/',
   build: {
     outDir: 'dist',
-    assetsDir: 'assets',
+    emptyOutDir: true,
     rollupOptions: {
+      input: {
+        main: './index.html',
+      },
       output: {
-        manualChunks: undefined
+        manualChunks: undefined,
+        assetFileNames: 'assets/[name].[ext]',
+        chunkFileNames: 'assets/[name].js',
+        entryFileNames: 'assets/[name].js'
       }
     }
   },
