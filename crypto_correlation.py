@@ -147,44 +147,53 @@ def _fetch_historical_data(trading_pair, start_date, end_date, session):
 
 def _fetch_coingecko_data(symbol, start_date, end_date, session):
     """Fetch historical data from CoinGecko"""
-    # Get coin ID first
-    url = "https://api.coingecko.com/api/v3/coins/list"
-    response = session.get(url, timeout=10)
-    response.raise_for_status()
-    coins = response.json()
-    
-    # Find the coin ID (case-insensitive match)
-    coin_id = None
-    for coin in coins:
-        if coin['symbol'].upper() == symbol.upper():
-            coin_id = coin['id']
-            break
-    
-    if not coin_id:
-        raise Exception(f"Could not find CoinGecko ID for {symbol}")
-    
-    # Get historical data
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
-    params = {
-        "vs_currency": "usd",
-        "from": int(start_date.timestamp()),
-        "to": int(end_date.timestamp())
-    }
-    
-    response = session.get(url, params=params, timeout=10)
-    response.raise_for_status()
-    data = response.json()
-    
-    # Convert to DataFrame
-    prices = data['prices']
-    df = pd.DataFrame(prices, columns=['timestamp', 'close'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    
-    # Resample to daily data to match Binance format
-    df = df.resample('D').last()
-    
-    return df
+    try:
+        # Get coin ID first
+        url = "https://api.coingecko.com/api/v3/coins/list"
+        response = session.get(url, timeout=10)
+        response.raise_for_status()
+        time.sleep(2)  # Increased delay for CoinGecko rate limit
+        coins = response.json()
+        
+        # Find the coin ID (case-insensitive match)
+        coin_id = None
+        for coin in coins:
+            if coin['symbol'].upper() == symbol.upper():
+                coin_id = coin['id']
+                break
+        
+        if not coin_id:
+            raise Exception(f"Could not find CoinGecko ID for {symbol}")
+        
+        # Get historical data
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
+        params = {
+            "vs_currency": "usd",
+            "from": int(start_date.timestamp()),
+            "to": int(end_date.timestamp())
+        }
+        
+        time.sleep(2)  # Additional delay before market data request
+        response = session.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Convert to DataFrame
+        prices = data['prices']
+        df = pd.DataFrame(prices, columns=['timestamp', 'close'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        # Resample to daily data to match Binance format
+        df = df.resample('D').last()
+        
+        return df
+    except requests.exceptions.RequestException as e:
+        if "429" in str(e):
+            logger.warning(f"Rate limit hit for {symbol}, waiting 60 seconds...")
+            time.sleep(60)  # Wait longer on rate limit
+            raise Exception(f"Rate limit exceeded for {symbol}")
+        raise
 
 def calculate_correlation_metrics(coin1_data, coin2_data, coin1_mcap, coin2_mcap, timeframe_days):
     """Calculate correlation and other metrics between two coins for a specific timeframe"""
@@ -326,6 +335,8 @@ def get_historical_data_parallel(symbols, start_date, end_date, session=None):
                     df.name = symbol
                     return symbol, df, None
                 except Exception as e:
+                    logger.warning(f"Binance fetch failed for USDT, trying CoinGecko after delay...")
+                    time.sleep(2)  # Wait before trying CoinGecko
                     try:
                         df = _fetch_coingecko_data(symbol, start_date, end_date, session)
                         df.name = symbol
@@ -338,6 +349,8 @@ def get_historical_data_parallel(symbols, start_date, end_date, session=None):
                 df.name = symbol
                 return symbol, df, None
             except Exception as e:
+                logger.warning(f"Binance fetch failed for {symbol}, trying CoinGecko after delay...")
+                time.sleep(2)  # Wait before trying CoinGecko
                 try:
                     df = _fetch_coingecko_data(symbol, start_date, end_date, session)
                     df.name = symbol
@@ -350,7 +363,7 @@ def get_historical_data_parallel(symbols, start_date, end_date, session=None):
     results = {}
     errors = {}
     
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced concurrent requests
         future_to_symbol = {executor.submit(fetch_single_coin, symbol): symbol for symbol, _ in symbols}
         for future in tqdm(as_completed(future_to_symbol), total=len(symbols), desc="Fetching historical data"):
             symbol = future_to_symbol[future]
@@ -362,7 +375,7 @@ def get_historical_data_parallel(symbols, start_date, end_date, session=None):
                     errors[symbol] = error
             except Exception as e:
                 errors[symbol] = str(e)
-            time.sleep(0.2)  # Small delay to avoid rate limits
+            time.sleep(0.5)  # Increased delay between requests
             
     return results, errors
 
@@ -430,7 +443,7 @@ def main():
             logger.info(f"{symbol}: {format_market_cap(mcap)}")
         
         # Fetch historical data for all coins in parallel
-        start_date = datetime.now() - timedelta(days=365)
+        start_date = datetime.now() - timedelta(days=90)
         end_date = datetime.now()
         
         all_coin_data = {}
@@ -445,9 +458,7 @@ def main():
         timeframes = {
             '7d': {'days': 7, 'threshold': 0.9},
             '30d': {'days': 30, 'threshold': 0.85},
-            '90d': {'days': 90, 'threshold': 0.8},
-            '180d': {'days': 180, 'threshold': 0.75},
-            '365d': {'days': 365, 'threshold': 0.7}
+            '90d': {'days': 90, 'threshold': 0.8}
         }
         
         # Calculate returns for all timeframes at once

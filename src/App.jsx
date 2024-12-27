@@ -6,6 +6,10 @@ import {
   Container,
   Typography,
   Box,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import Papa from 'papaparse';
 
@@ -24,13 +28,14 @@ const minimalTheme = createTheme({
 });
 
 // Timeframe options
-const timeframes = ['7d', '30d', '90d', '180d', '365d'];
+const timeframes = ['7d', '30d', '90d'];
 
 function App() {
   const [correlationData, setCorrelationData] = useState({});
   const [currentTimeframe, setCurrentTimeframe] = useState('7d');
   const [orderBy, setOrderBy] = useState('Correlation');
   const [order, setOrder] = useState('desc');
+  const [correlationFilter, setCorrelationFilter] = useState(0.9);
 
   useEffect(() => {
     // Load all CSV files
@@ -93,6 +98,16 @@ function App() {
     });
   };
 
+  const filterByCorrelation = (data) => {
+    if (correlationFilter === 0) return data;
+    
+    return data.filter(row => {
+      const correlation = parseFloat(row.Correlation);
+      if (isNaN(correlation)) return false;
+      return correlation >= correlationFilter;
+    });
+  };
+
   const currentData = correlationData[currentTimeframe] || [];
   // Filter out empty rows before sorting
   const filteredData = currentData.filter(row => 
@@ -101,7 +116,8 @@ function App() {
     row['Combined Market Cap'] && 
     row['Combined Change %']
   );
-  const sortedData = sortData([...filteredData]);
+  const correlationFilteredData = filterByCorrelation(filteredData);
+  const sortedData = sortData([...correlationFilteredData]);
 
   return (
     <ThemeProvider theme={minimalTheme}>
@@ -134,6 +150,7 @@ function App() {
             gap: 2,
             justifyContent: 'center',
             flexWrap: 'wrap',
+            alignItems: 'center',
           }}
         >
           {timeframes.map(timeframe => (
@@ -154,6 +171,40 @@ function App() {
               {timeframe.toUpperCase()}
             </button>
           ))}
+          
+          <FormControl 
+            size="small" 
+            sx={{ 
+              minWidth: 200,
+              '& .MuiOutlinedInput-root': {
+                color: '#fff',
+                '& fieldset': {
+                  borderColor: '#666',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#888',
+                },
+              },
+              '& .MuiInputLabel-root': {
+                color: '#888',
+              },
+            }}
+          >
+            <InputLabel id="correlation-filter-label">Min Correlation</InputLabel>
+            <Select
+              labelId="correlation-filter-label"
+              value={correlationFilter}
+              label="Min Correlation"
+              onChange={(e) => setCorrelationFilter(e.target.value)}
+            >
+              <MenuItem value={0.9}>0.9</MenuItem>
+              <MenuItem value={0.8}>0.8</MenuItem>
+              <MenuItem value={0.7}>0.7</MenuItem>
+              <MenuItem value={0.6}>0.6</MenuItem>
+              <MenuItem value={0.5}>0.5</MenuItem>
+              <MenuItem value={0}>All</MenuItem>
+            </Select>
+          </FormControl>
         </Box>
 
         <Box sx={{ overflowX: 'auto' }}>
