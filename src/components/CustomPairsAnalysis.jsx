@@ -47,6 +47,17 @@ const timeframes = [
   { label: '1 Year', value: 365 },
 ];
 
+// Move cache outside component
+const globalCache = {
+  tokens: null,
+  tokenData: new Map(),
+  lastFetch: new Map(),
+};
+
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const API_DELAY = 1100; // 1.1 seconds between API calls
+const MAX_RETRIES = 3;
+
 export default function CustomPairsAnalysis({ open, onClose }) {
   const [token1, setToken1] = useState(null);
   const [token2, setToken2] = useState(null);
@@ -60,29 +71,20 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const [analysisData, setAnalysisData] = useState(null);
   const [tokenData, setTokenData] = useState({ token1: null, token2: null });
 
-  const cache = {
-    tokens: null,
-    tokenData: new Map(),
-    lastFetch: new Map(),
-  };
-
-  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-  const API_DELAY = 1100; // 1.1 seconds between API calls
-
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const fetchWithRetry = async (url, params = {}, retries = 3, delay = 2000) => {
+  const fetchWithRetry = async (url, params = {}, retries = MAX_RETRIES, delay = 2000) => {
     // Check cache first
     const cacheKey = url + JSON.stringify(params);
-    const cached = cache.tokenData.get(cacheKey);
-    const lastFetchTime = cache.lastFetch.get(cacheKey);
+    const cached = globalCache.tokenData.get(cacheKey);
+    const lastFetchTime = globalCache.lastFetch.get(cacheKey);
     
     if (cached && lastFetchTime && (Date.now() - lastFetchTime < CACHE_DURATION)) {
       return { data: cached };
     }
 
     // If there was a recent fetch for any endpoint, wait
-    const lastAnyFetch = Math.max(...Array.from(cache.lastFetch.values()));
+    const lastAnyFetch = Math.max(...Array.from(globalCache.lastFetch.values()));
     if (lastAnyFetch) {
       const timeSinceLastFetch = Date.now() - lastAnyFetch;
       if (timeSinceLastFetch < API_DELAY) {
@@ -90,46 +92,69 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       }
     }
 
+    let lastError;
     for (let i = 0; i < retries; i++) {
       try {
-        const response = await axios.get(url, { params });
+        const response = await axios.get(url, { 
+          params,
+          timeout: 10000 // 10 second timeout
+        });
         // Cache the response
-        cache.tokenData.set(cacheKey, response.data);
-        cache.lastFetch.set(cacheKey, Date.now());
+        globalCache.tokenData.set(cacheKey, response.data);
+        globalCache.lastFetch.set(cacheKey, Date.now());
         return response;
       } catch (error) {
+        lastError = error;
         if (error.response?.status === 429) {
-          await sleep(delay * (i + 1)); // Exponential backoff
+          const waitTime = delay * Math.pow(2, i); // Exponential backoff
+          await sleep(waitTime);
           continue;
+        }
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('Request timed out. Please try again.');
         }
         throw error;
       }
     }
-    throw new Error('Max retries reached');
+    throw lastError;
   };
 
-  // Update token list fetching to use cache
+  // Update token list fetching
   useEffect(() => {
     const fetchTokens = async () => {
-      if (cache.tokens) {
-        setTokenOptions(cache.tokens);
+      if (globalCache.tokens) {
+        setTokenOptions(globalCache.tokens);
         return;
       }
 
       setLoadingTokens(true);
+      setError('');
+      
       try {
         const response = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
           include_platform: false
         });
-        cache.tokens = response.data;
-        setTokenOptions(response.data);
+        
+        if (response.data && Array.isArray(response.data)) {
+          globalCache.tokens = response.data;
+          setTokenOptions(response.data);
+        } else {
+          throw new Error('Invalid response format');
+        }
       } catch (error) {
         console.error('Error fetching tokens:', error);
-        setError('Failed to fetch token list. Please refresh the page.');
+        if (error.response?.status === 429) {
+          setError('Rate limit reached. Please wait a moment and refresh.');
+        } else if (error.code === 'ECONNABORTED') {
+          setError('Request timed out. Please refresh the page.');
+        } else {
+          setError('Failed to fetch token list. Please try again later.');
+        }
       } finally {
         setLoadingTokens(false);
       }
     };
+
     fetchTokens();
   }, []);
 
