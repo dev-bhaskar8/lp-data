@@ -40,6 +40,7 @@ ChartJS.register(
 );
 
 const timeframes = [
+  { label: '7 Days', value: 7 },
   { label: '30 Days', value: 30 },
   { label: '90 Days', value: 90 },
   { label: '180 Days', value: 180 },
@@ -57,6 +58,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [analysisData, setAnalysisData] = useState(null);
+  const [tokenData, setTokenData] = useState({ token1: null, token2: null });
 
   // Fetch token list from CoinGecko
   useEffect(() => {
@@ -133,8 +135,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     setLoading(true);
     setError('');
     try {
-      // Fetch historical price data for both tokens
-      const [data1, data2] = await Promise.all([
+      // Fetch both price data and token info
+      const [data1, data2, info1, info2] = await Promise.all([
         axios.get(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
           params: {
             vs_currency: 'usd',
@@ -148,7 +150,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             days: selectedTimeframe,
             interval: 'daily'
           }
-        })
+        }),
+        axios.get(`https://api.coingecko.com/api/v3/coins/${token1.id}`),
+        axios.get(`https://api.coingecko.com/api/v3/coins/${token2.id}`)
       ]);
 
       // Extract prices and calculate percentage changes
@@ -165,6 +169,34 @@ export default function CustomPairsAnalysis({ open, onClose }) {
 
       // Calculate correlation
       const correlation = calculateCorrelation(changes1, changes2);
+
+      // Format market data
+      const formatMarketCap = (value) => {
+        if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+        if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+        if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+        return `$${value.toFixed(2)}`;
+      };
+
+      // Store token data
+      setTokenData({
+        token1: {
+          price: info1.data.market_data.current_price.usd,
+          marketCap: formatMarketCap(info1.data.market_data.market_cap.usd),
+          volume24h: formatMarketCap(info1.data.market_data.total_volume.usd),
+          priceChange24h: info1.data.market_data.price_change_percentage_24h,
+          priceChange7d: info1.data.market_data.price_change_percentage_7d,
+          priceChange30d: info1.data.market_data.price_change_percentage_30d,
+        },
+        token2: {
+          price: info2.data.market_data.current_price.usd,
+          marketCap: formatMarketCap(info2.data.market_data.market_cap.usd),
+          volume24h: formatMarketCap(info2.data.market_data.total_volume.usd),
+          priceChange24h: info2.data.market_data.price_change_percentage_24h,
+          priceChange7d: info2.data.market_data.price_change_percentage_7d,
+          priceChange30d: info2.data.market_data.price_change_percentage_30d,
+        }
+      });
 
       setAnalysisData({
         correlation,
@@ -194,12 +226,66 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     }
   };
 
+  const renderTokenStats = (token, data) => {
+    if (!data) return null;
+    return (
+      <Box sx={{ 
+        p: 2, 
+        bgcolor: 'rgba(45, 45, 45, 0.5)', 
+        borderRadius: 1,
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 2
+      }}>
+        <Typography variant="h6" sx={{ gridColumn: '1/-1', mb: 1 }}>
+          {token.symbol.toUpperCase()} Stats
+        </Typography>
+        <Box>
+          <Typography variant="body2" color="#888">Price</Typography>
+          <Typography>${data.price.toLocaleString()}</Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">Market Cap</Typography>
+          <Typography>{data.marketCap}</Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">24h Volume</Typography>
+          <Typography>{data.volume24h}</Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">24h Change</Typography>
+          <Typography sx={{ color: data.priceChange24h >= 0 ? '#4EC9B0' : '#F14C4C' }}>
+            {data.priceChange24h?.toFixed(2)}%
+          </Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">7d Change</Typography>
+          <Typography sx={{ color: data.priceChange7d >= 0 ? '#4EC9B0' : '#F14C4C' }}>
+            {data.priceChange7d?.toFixed(2)}%
+          </Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">30d Change</Typography>
+          <Typography sx={{ color: data.priceChange30d >= 0 ? '#4EC9B0' : '#F14C4C' }}>
+            {data.priceChange30d?.toFixed(2)}%
+          </Typography>
+        </Box>
+      </Box>
+    );
+  };
+
   return (
     <Dialog 
       open={open} 
       onClose={onClose}
       maxWidth="md"
       fullWidth
+      PaperProps={{
+        sx: {
+          bgcolor: '#252526',
+          color: '#fff',
+        }
+      }}
     >
       <DialogTitle>Custom Pairs Analysis</DialogTitle>
       <DialogContent>
@@ -305,6 +391,15 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             variant="contained"
             onClick={analyzeTokens}
             disabled={!token1 || !token2 || loading}
+            sx={{
+              bgcolor: '#3B82F6',
+              '&:hover': {
+                bgcolor: '#2563EB',
+              },
+              '&.Mui-disabled': {
+                bgcolor: 'rgba(59, 130, 246, 0.3)',
+              }
+            }}
           >
             {loading ? <CircularProgress size={24} /> : 'Analyze'}
           </Button>
@@ -317,10 +412,20 @@ export default function CustomPairsAnalysis({ open, onClose }) {
 
           {analysisData && (
             <Box sx={{ mt: 3 }}>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant="h6" gutterBottom sx={{ 
+                color: analysisData.correlation >= 0.5 ? '#4EC9B0' : '#F14C4C',
+                fontSize: '1.5rem',
+                textAlign: 'center',
+                mb: 3
+              }}>
                 Correlation: {analysisData.correlation.toFixed(4)}
               </Typography>
-              <Box sx={{ height: 400, mt: 2 }}>
+
+              {renderTokenStats(token1, tokenData.token1)}
+              <Box sx={{ my: 2 }} />
+              {renderTokenStats(token2, tokenData.token2)}
+
+              <Box sx={{ height: 400, mt: 3 }}>
                 <Line
                   data={analysisData.chartData}
                   options={{
@@ -329,17 +434,36 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                     plugins: {
                       title: {
                         display: true,
-                        text: 'Daily Price Changes (%)'
+                        text: 'Daily Price Changes (%)',
+                        color: '#fff'
                       },
                       legend: {
-                        position: 'top'
+                        position: 'top',
+                        labels: {
+                          color: '#fff'
+                        }
                       }
                     },
                     scales: {
                       y: {
                         title: {
                           display: true,
-                          text: 'Price Change (%)'
+                          text: 'Price Change (%)',
+                          color: '#888'
+                        },
+                        grid: {
+                          color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                          color: '#888'
+                        }
+                      },
+                      x: {
+                        grid: {
+                          color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        ticks: {
+                          color: '#888'
                         }
                       }
                     }
@@ -351,7 +475,17 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Close</Button>
+        <Button 
+          onClick={onClose}
+          sx={{
+            color: '#fff',
+            '&:hover': {
+              bgcolor: 'rgba(255, 255, 255, 0.1)'
+            }
+          }}
+        >
+          Close
+        </Button>
       </DialogActions>
     </Dialog>
   );
