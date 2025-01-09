@@ -12,8 +12,10 @@ import {
   InputLabel,
   TextField,
   Pagination,
+  Button,
 } from '@mui/material';
 import Papa from 'papaparse';
+import CustomPairsAnalysis from './components/CustomPairsAnalysis';
 
 // Create minimal theme
 const minimalTheme = createTheme({
@@ -83,6 +85,7 @@ function App({ baseUrl }) {
   const [page, setPage] = useState(1);
   const entriesPerPage = 100;
   const [lastUpdated, setLastUpdated] = useState('Loading...');
+  const [customPairsOpen, setCustomPairsOpen] = useState(false);
 
   useEffect(() => {
     // Fetch last update time from GitHub API
@@ -353,6 +356,19 @@ function App({ baseUrl }) {
               },
             }}
           />
+
+          <Button
+            variant="contained"
+            onClick={() => setCustomPairsOpen(true)}
+            sx={{
+              backgroundColor: '#3B82F6',
+              '&:hover': {
+                backgroundColor: '#2563EB',
+              },
+            }}
+          >
+            Custom Pairs
+          </Button>
         </Box>
 
         <Box sx={{ overflowX: 'auto' }}>
@@ -500,6 +516,11 @@ function App({ baseUrl }) {
         >
           Made with <span>❤</span> by Vaas
         </Typography>
+
+        <CustomPairsAnalysis
+          open={customPairsOpen}
+          onClose={() => setCustomPairsOpen(false)}
+        />
       </Container>
     </ThemeProvider>
   );
