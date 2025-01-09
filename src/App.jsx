@@ -73,7 +73,7 @@ const minimalTheme = createTheme({
 // Timeframe options
 const timeframes = ['7d', '30d', '90d'];
 
-function App() {
+function App({ baseUrl }) {
   const [correlationData, setCorrelationData] = useState({});
   const [currentTimeframe, setCurrentTimeframe] = useState('7d');
   const [orderBy, setOrderBy] = useState('Correlation');
@@ -112,7 +112,7 @@ function App() {
 
     // Load CSV files from root directory
     Promise.all(timeframes.map(timeframe => 
-      fetch(`${import.meta.env.BASE_URL}crypto_correlations_${timeframe}.csv`)
+      fetch(`${baseUrl}crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });
@@ -124,7 +124,7 @@ function App() {
     }).catch(error => {
       console.error('Error loading CSV files:', error);
     });
-  }, []);
+  }, [baseUrl]);
 
   const handleTimeframeChange = (timeframe) => {
     setCurrentTimeframe(timeframe);
