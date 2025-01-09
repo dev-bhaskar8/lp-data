@@ -82,8 +82,34 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const entriesPerPage = 100;
+  const [lastUpdated, setLastUpdated] = useState('Loading...');
 
   useEffect(() => {
+    // Fetch last update time from GitHub API
+    fetch('https://api.github.com/repos/dev-bhaskar8/lp-data/commits?path=crypto_correlations_7d.csv&page=1&per_page=1')
+      .then(response => response.json())
+      .then(data => {
+        if (data && data[0] && data[0].commit) {
+          const date = new Date(data[0].commit.committer.date);
+          const now = new Date();
+          const hoursAgo = Math.floor((now - date) / (1000 * 60 * 60));
+          const formattedDate = date.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+            timeZoneName: 'short'
+          });
+          setLastUpdated(`${hoursAgo}h ago (${formattedDate})`);
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching last update time:', error);
+        setLastUpdated('Unable to fetch update time');
+      });
+
     // Load CSV files from root directory
     Promise.all(timeframes.map(timeframe => 
       fetch(`/lp-data/crypto_correlations_${timeframe}.csv`)
@@ -221,12 +247,25 @@ function App() {
           variant="subtitle1" 
           align="center" 
           sx={{ 
-            mb: 5,
+            mb: 2,
             color: '#888',
             fontSize: '1rem',
           }}
         >
           Find highly correlated cryptocurrency pairs sorted by market cap and price movement
+        </Typography>
+
+        <Typography 
+          variant="body2" 
+          align="center" 
+          sx={{ 
+            mb: 5,
+            color: '#666',
+            fontSize: '0.875rem',
+            fontWeight: 500,
+          }}
+        >
+          Last updated: {lastUpdated}
         </Typography>
 
         <Box 
