@@ -60,20 +60,37 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const [analysisData, setAnalysisData] = useState(null);
   const [tokenData, setTokenData] = useState({ token1: null, token2: null });
 
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const fetchWithRetry = async (url, params = {}, retries = 3, delay = 2000) => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await axios.get(url, { params });
+        return response;
+      } catch (error) {
+        if (error.response?.status === 429) {
+          // Rate limit hit, wait and retry
+          await sleep(delay);
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new Error('Max retries reached');
+  };
+
   // Fetch token list from CoinGecko
   useEffect(() => {
     const fetchTokens = async () => {
       setLoadingTokens(true);
       try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list', {
-          params: {
-            include_platform: false
-          }
+        const response = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
+          include_platform: false
         });
         setTokenOptions(response.data);
       } catch (error) {
         console.error('Error fetching tokens:', error);
-        setError('Failed to fetch token list');
+        setError('Failed to fetch token list. Please refresh the page.');
       } finally {
         setLoadingTokens(false);
       }
@@ -135,25 +152,29 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     setLoading(true);
     setError('');
     try {
-      // Fetch both price data and token info
+      // Fetch both price data and token info with retry logic
       const [data1, data2, info1, info2] = await Promise.all([
-        axios.get(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
-          params: {
-            vs_currency: 'usd',
-            days: selectedTimeframe,
-            interval: 'daily'
-          }
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
+          vs_currency: 'usd',
+          days: selectedTimeframe,
+          interval: 'daily'
         }),
-        axios.get(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
-          params: {
-            vs_currency: 'usd',
-            days: selectedTimeframe,
-            interval: 'daily'
-          }
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
+          vs_currency: 'usd',
+          days: selectedTimeframe,
+          interval: 'daily'
         }),
-        axios.get(`https://api.coingecko.com/api/v3/coins/${token1.id}`),
-        axios.get(`https://api.coingecko.com/api/v3/coins/${token2.id}`)
-      ]);
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`),
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`)
+      ]).catch(error => {
+        if (error.response?.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        } else if (error.response?.status === 404) {
+          throw new Error('One or both tokens not found. Please try different tokens.');
+        } else {
+          throw new Error('Failed to fetch token data. Please try again.');
+        }
+      });
 
       // Extract prices and calculate percentage changes
       const prices1 = data1.data.prices.map(p => p[1]);
@@ -220,7 +241,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       });
     } catch (error) {
       console.error('Error analyzing tokens:', error);
-      setError('Failed to analyze tokens. Please try again.');
+      setError(error.message || 'Failed to analyze tokens. Please try again.');
     } finally {
       setLoading(false);
     }
