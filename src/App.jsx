@@ -110,9 +110,9 @@ function App({ baseUrl }) {
         setLastUpdated('Unable to fetch update time');
       });
 
-    // Load CSV files from root directory
+    // Load CSV files directly from GitHub raw content
     Promise.all(timeframes.map(timeframe => 
-      fetch(`${baseUrl}crypto_correlations_${timeframe}.csv`)
+      fetch(`https://raw.githubusercontent.com/dev-bhaskar8/lp-data/main/crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });
@@ -124,7 +124,7 @@ function App({ baseUrl }) {
     }).catch(error => {
       console.error('Error loading CSV files:', error);
     });
-  }, [baseUrl]);
+  }, []);
 
   const handleTimeframeChange = (timeframe) => {
     setCurrentTimeframe(timeframe);
