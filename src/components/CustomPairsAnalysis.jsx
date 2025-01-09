@@ -83,12 +83,26 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const getFilteredOptions = (searchText) => {
     if (!searchText) return [];
     const lowerSearch = searchText.toLowerCase();
-    return tokenOptions
-      .filter(token => 
-        token.symbol.toLowerCase().includes(lowerSearch) ||
-        token.name.toLowerCase().includes(lowerSearch)
-      )
-      .slice(0, 100); // Limit to top 100 matches for better performance
+
+    // First, find exact symbol matches and prioritize by length
+    const exactSymbolMatches = tokenOptions.filter(token => 
+      token.symbol.toLowerCase() === lowerSearch
+    ).sort((a, b) => a.symbol.length - b.symbol.length);
+
+    // Then, find partial symbol matches and prioritize by length
+    const partialSymbolMatches = tokenOptions.filter(token => 
+      token.symbol.toLowerCase().includes(lowerSearch) &&
+      token.symbol.toLowerCase() !== lowerSearch
+    ).sort((a, b) => a.symbol.length - b.symbol.length);
+
+    // Finally, find name matches for remaining tokens
+    const nameMatches = tokenOptions.filter(token => 
+      token.name.toLowerCase().includes(lowerSearch) &&
+      !token.symbol.toLowerCase().includes(lowerSearch)
+    );
+
+    // Combine all matches with priority order
+    return [...exactSymbolMatches, ...partialSymbolMatches, ...nameMatches].slice(0, 100);
   };
 
   // Memoize filtered options
@@ -198,11 +212,24 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onInputChange={(event, newInputValue) => setSearchToken1(newInputValue)}
               options={filteredOptions1}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option.name} (${option.symbol.toUpperCase()})`}
+              getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    <Typography component="span" sx={{ fontWeight: 'bold' }}>
+                      {option.symbol.toUpperCase()}
+                    </Typography>
+                    <Typography component="span" sx={{ fontSize: '0.8rem', color: '#888' }}>
+                      {option.name}
+                    </Typography>
+                  </Box>
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField 
                   {...params} 
                   label="Search Token 1"
+                  placeholder="Enter token symbol..."
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
@@ -225,11 +252,24 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onInputChange={(event, newInputValue) => setSearchToken2(newInputValue)}
               options={filteredOptions2}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option.name} (${option.symbol.toUpperCase()})`}
+              getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
+              renderOption={(props, option) => (
+                <li {...props}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                    <Typography component="span" sx={{ fontWeight: 'bold' }}>
+                      {option.symbol.toUpperCase()}
+                    </Typography>
+                    <Typography component="span" sx={{ fontSize: '0.8rem', color: '#888' }}>
+                      {option.name}
+                    </Typography>
+                  </Box>
+                </li>
+              )}
               renderInput={(params) => (
                 <TextField 
                   {...params} 
                   label="Search Token 2"
+                  placeholder="Enter token symbol..."
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
