@@ -60,17 +60,46 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const [analysisData, setAnalysisData] = useState(null);
   const [tokenData, setTokenData] = useState({ token1: null, token2: null });
 
+  const cache = {
+    tokens: null,
+    tokenData: new Map(),
+    lastFetch: new Map(),
+  };
+
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+  const API_DELAY = 1100; // 1.1 seconds between API calls
+
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   const fetchWithRetry = async (url, params = {}, retries = 3, delay = 2000) => {
+    // Check cache first
+    const cacheKey = url + JSON.stringify(params);
+    const cached = cache.tokenData.get(cacheKey);
+    const lastFetchTime = cache.lastFetch.get(cacheKey);
+    
+    if (cached && lastFetchTime && (Date.now() - lastFetchTime < CACHE_DURATION)) {
+      return { data: cached };
+    }
+
+    // If there was a recent fetch for any endpoint, wait
+    const lastAnyFetch = Math.max(...Array.from(cache.lastFetch.values()));
+    if (lastAnyFetch) {
+      const timeSinceLastFetch = Date.now() - lastAnyFetch;
+      if (timeSinceLastFetch < API_DELAY) {
+        await sleep(API_DELAY - timeSinceLastFetch);
+      }
+    }
+
     for (let i = 0; i < retries; i++) {
       try {
         const response = await axios.get(url, { params });
+        // Cache the response
+        cache.tokenData.set(cacheKey, response.data);
+        cache.lastFetch.set(cacheKey, Date.now());
         return response;
       } catch (error) {
         if (error.response?.status === 429) {
-          // Rate limit hit, wait and retry
-          await sleep(delay);
+          await sleep(delay * (i + 1)); // Exponential backoff
           continue;
         }
         throw error;
@@ -79,14 +108,20 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     throw new Error('Max retries reached');
   };
 
-  // Fetch token list from CoinGecko
+  // Update token list fetching to use cache
   useEffect(() => {
     const fetchTokens = async () => {
+      if (cache.tokens) {
+        setTokenOptions(cache.tokens);
+        return;
+      }
+
       setLoadingTokens(true);
       try {
         const response = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
           include_platform: false
         });
+        cache.tokens = response.data;
         setTokenOptions(response.data);
       } catch (error) {
         console.error('Error fetching tokens:', error);
@@ -442,11 +477,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 Correlation: {analysisData.correlation.toFixed(4)}
               </Typography>
 
-              {renderTokenStats(token1, tokenData.token1)}
-              <Box sx={{ my: 2 }} />
-              {renderTokenStats(token2, tokenData.token2)}
-
-              <Box sx={{ height: 400, mt: 3 }}>
+              <Box sx={{ height: 400, mb: 4 }}>
                 <Line
                   data={analysisData.chartData}
                   options={{
@@ -491,6 +522,10 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                   }}
                 />
               </Box>
+
+              {renderTokenStats(token1, tokenData.token1)}
+              <Box sx={{ my: 2 }} />
+              {renderTokenStats(token2, tokenData.token2)}
             </Box>
           )}
         </Box>
