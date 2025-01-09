@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -52,6 +52,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   const [searchToken1, setSearchToken1] = useState('');
   const [searchToken2, setSearchToken2] = useState('');
   const [tokenOptions, setTokenOptions] = useState([]);
+  const [loadingTokens, setLoadingTokens] = useState(false);
   const [selectedTimeframe, setSelectedTimeframe] = useState(30);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -60,16 +61,39 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   // Fetch token list from CoinGecko
   useEffect(() => {
     const fetchTokens = async () => {
+      setLoadingTokens(true);
       try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list');
+        const response = await axios.get('https://api.coingecko.com/api/v3/coins/list', {
+          params: {
+            include_platform: false
+          }
+        });
         setTokenOptions(response.data);
       } catch (error) {
         console.error('Error fetching tokens:', error);
         setError('Failed to fetch token list');
+      } finally {
+        setLoadingTokens(false);
       }
     };
     fetchTokens();
   }, []);
+
+  // Filter tokens based on search input
+  const getFilteredOptions = (searchText) => {
+    if (!searchText) return [];
+    const lowerSearch = searchText.toLowerCase();
+    return tokenOptions
+      .filter(token => 
+        token.symbol.toLowerCase().includes(lowerSearch) ||
+        token.name.toLowerCase().includes(lowerSearch)
+      )
+      .slice(0, 100); // Limit to top 100 matches for better performance
+  };
+
+  // Memoize filtered options
+  const filteredOptions1 = useMemo(() => getFilteredOptions(searchToken1), [searchToken1, tokenOptions]);
+  const filteredOptions2 = useMemo(() => getFilteredOptions(searchToken2), [searchToken2, tokenOptions]);
 
   // Function to calculate correlation
   const calculateCorrelation = (prices1, prices2) => {
@@ -172,9 +196,26 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onChange={(event, newValue) => setToken1(newValue)}
               inputValue={searchToken1}
               onInputChange={(event, newInputValue) => setSearchToken1(newInputValue)}
-              options={tokenOptions}
+              options={filteredOptions1}
+              loading={loadingTokens}
               getOptionLabel={(option) => `${option.name} (${option.symbol.toUpperCase()})`}
-              renderInput={(params) => <TextField {...params} label="Token 1" />}
+              renderInput={(params) => (
+                <TextField 
+                  {...params} 
+                  label="Search Token 1"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingTokens ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              filterOptions={(x) => x}
+              noOptionsText={searchToken1.length < 2 ? "Type to search..." : "No tokens found"}
               sx={{ flex: 1 }}
             />
             <Autocomplete
@@ -182,9 +223,26 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onChange={(event, newValue) => setToken2(newValue)}
               inputValue={searchToken2}
               onInputChange={(event, newInputValue) => setSearchToken2(newInputValue)}
-              options={tokenOptions}
+              options={filteredOptions2}
+              loading={loadingTokens}
               getOptionLabel={(option) => `${option.name} (${option.symbol.toUpperCase()})`}
-              renderInput={(params) => <TextField {...params} label="Token 2" />}
+              renderInput={(params) => (
+                <TextField 
+                  {...params} 
+                  label="Search Token 2"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingTokens ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              filterOptions={(x) => x}
+              noOptionsText={searchToken2.length < 2 ? "Type to search..." : "No tokens found"}
               sx={{ flex: 1 }}
             />
             <FormControl sx={{ minWidth: 120 }}>
