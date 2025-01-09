@@ -112,7 +112,7 @@ function App() {
 
     // Load CSV files from root directory
     Promise.all(timeframes.map(timeframe => 
-      fetch(`/lp-data/crypto_correlations_${timeframe}.csv`)
+      fetch(`${import.meta.env.BASE_URL}crypto_correlations_${timeframe}.csv`)
         .then(response => response.text())
         .then(csv => {
           const result = Papa.parse(csv, { header: true });
