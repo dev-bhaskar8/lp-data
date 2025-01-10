@@ -232,20 +232,22 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     setLoading(true);
     setError('');
     try {
-      // Fetch both price data and token info with retry logic
-      const [data1, data2, info1, info2] = await Promise.all([
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
-          vs_currency: 'usd',
-          days: selectedTimeframe,
-          interval: 'daily'
+      // Fetch market data first to ensure tokens are valid
+      const [info1, info2] = await Promise.all([
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`, {
+          localization: false,
+          tickers: false,
+          community_data: false,
+          developer_data: false,
+          sparkline: false
         }),
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
-          vs_currency: 'usd',
-          days: selectedTimeframe,
-          interval: 'daily'
-        }),
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`),
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`)
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`, {
+          localization: false,
+          tickers: false,
+          community_data: false,
+          developer_data: false,
+          sparkline: false
+        })
       ]).catch(error => {
         if (error.response?.status === 429) {
           throw new Error('Rate limit exceeded. Please wait a moment and try again.');
@@ -255,6 +257,31 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           throw new Error('Failed to fetch token data. Please try again.');
         }
       });
+
+      // After successful market data fetch, get historical data
+      const [data1, data2] = await Promise.all([
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
+          vs_currency: 'usd',
+          days: selectedTimeframe,
+          interval: 'daily'
+        }),
+        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
+          vs_currency: 'usd',
+          days: selectedTimeframe,
+          interval: 'daily'
+        })
+      ]).catch(error => {
+        if (error.response?.status === 429) {
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        } else {
+          throw new Error('Failed to fetch historical data. Please try again.');
+        }
+      });
+
+      // Validate the data before processing
+      if (!data1.data?.prices?.length || !data2.data?.prices?.length) {
+        throw new Error('Invalid price data received. Please try again.');
+      }
 
       // Extract prices and calculate percentage changes
       const prices1 = data1.data.prices.map(p => p[1]);
@@ -268,38 +295,54 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         i === 0 ? 0 : ((price - prices2[i-1]) / prices2[i-1]) * 100
       );
 
+      // Validate correlation data
+      if (!changes1.length || !changes2.length) {
+        throw new Error('Insufficient data for correlation analysis.');
+      }
+
       // Calculate correlation
       const correlation = calculateCorrelation(changes1, changes2);
 
+      // Validate market data
+      const validateMarketData = (data) => {
+        const marketData = data?.market_data;
+        if (!marketData) throw new Error('Market data not available.');
+        return marketData;
+      };
+
+      const marketData1 = validateMarketData(info1.data);
+      const marketData2 = validateMarketData(info2.data);
+
       // Format market data
       const formatMarketCap = (value) => {
+        if (!value && value !== 0) return 'N/A';
         if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
         if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
         if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
         return `$${value.toFixed(2)}`;
       };
 
-      // Store token data
+      // Store token data with null checks
       setTokenData({
         token1: {
-          price: info1.data.market_data.current_price.usd,
-          marketCap: formatMarketCap(info1.data.market_data.market_cap.usd),
-          volume24h: formatMarketCap(info1.data.market_data.total_volume.usd),
-          priceChange24h: info1.data.market_data.price_change_percentage_24h || 0,
-          priceChange7d: info1.data.market_data.price_change_percentage_7d || 0,
-          priceChange30d: info1.data.market_data.price_change_percentage_30d || 0,
-          priceChange90d: info1.data.market_data.price_change_percentage_90d || 0,
-          priceChange1y: info1.data.market_data.price_change_percentage_1y || 0,
+          price: marketData1.current_price?.usd ?? 0,
+          marketCap: formatMarketCap(marketData1.market_cap?.usd),
+          volume24h: formatMarketCap(marketData1.total_volume?.usd),
+          priceChange24h: marketData1.price_change_percentage_24h ?? null,
+          priceChange7d: marketData1.price_change_percentage_7d ?? null,
+          priceChange30d: marketData1.price_change_percentage_30d ?? null,
+          priceChange90d: marketData1.price_change_percentage_90d ?? null,
+          priceChange1y: marketData1.price_change_percentage_1y ?? null,
         },
         token2: {
-          price: info2.data.market_data.current_price.usd,
-          marketCap: formatMarketCap(info2.data.market_data.market_cap.usd),
-          volume24h: formatMarketCap(info2.data.market_data.total_volume.usd),
-          priceChange24h: info2.data.market_data.price_change_percentage_24h || 0,
-          priceChange7d: info2.data.market_data.price_change_percentage_7d || 0,
-          priceChange30d: info2.data.market_data.price_change_percentage_30d || 0,
-          priceChange90d: info2.data.market_data.price_change_percentage_90d || 0,
-          priceChange1y: info2.data.market_data.price_change_percentage_1y || 0,
+          price: marketData2.current_price?.usd ?? 0,
+          marketCap: formatMarketCap(marketData2.market_cap?.usd),
+          volume24h: formatMarketCap(marketData2.total_volume?.usd),
+          priceChange24h: marketData2.price_change_percentage_24h ?? null,
+          priceChange7d: marketData2.price_change_percentage_7d ?? null,
+          priceChange30d: marketData2.price_change_percentage_30d ?? null,
+          priceChange90d: marketData2.price_change_percentage_90d ?? null,
+          priceChange1y: marketData2.price_change_percentage_1y ?? null,
         }
       });
 
