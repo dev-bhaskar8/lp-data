@@ -63,12 +63,20 @@ const BASE_URL = 'https://api.coingecko.com/api/v3';
 
 // Read API key once from environment
 const COINGECKO_API_KEY = (() => {
-  const key = import.meta.env.COINGECKO_API_KEY;
-  if (!key) {
-    console.warn('CoinGecko API key not found in .env file. Using public API with lower rate limits.');
-  } else {
-    console.log('CoinGecko API key loaded successfully');
+  // Log available environment variables in development
+  if (import.meta.env.DEV) {
+    console.log('Available environment variables:', Object.keys(import.meta.env));
   }
+
+  // Try both environment variable formats
+  const key = import.meta.env.VITE_COINGECKO_API_KEY || import.meta.env.COINGECKO_API_KEY;
+  
+  if (!key) {
+    console.warn('CoinGecko API key not found. Please check your .env file has COINGECKO_API_KEY or VITE_COINGECKO_API_KEY set.');
+    return null;
+  }
+
+  console.log('CoinGecko API key loaded successfully');
   return key;
 })();
 
@@ -123,9 +131,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         const headers = {};
         if (COINGECKO_API_KEY) {
           headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
-          console.log('Using API key for request to:', url);
+          console.log('Using API key for request to:', new URL(url).pathname);
         } else {
-          console.log('No API key available, using public API for:', url);
+          console.log('No API key available, using public API for:', new URL(url).pathname);
         }
 
         // Add proxy to bypass CORS
