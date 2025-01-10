@@ -63,8 +63,12 @@ const BASE_URL = 'https://api.coingecko.com/api/v3';
 
 // Read API key once from environment
 const COINGECKO_API_KEY = (() => {
-  const key = import.meta.env.VITE_COINGECKO_API_KEY;
-  console.log('API Key available:', !!key);
+  const key = import.meta.env.COINGECKO_API_KEY;
+  if (!key) {
+    console.warn('CoinGecko API key not found in .env file');
+  } else {
+    console.log('CoinGecko API key loaded successfully');
+  }
   return key;
 })();
 
@@ -118,6 +122,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         const headers = {};
         if (COINGECKO_API_KEY) {
           headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
+          console.log('Using API key for request');
         }
 
         const response = await axios.get(url, { 
