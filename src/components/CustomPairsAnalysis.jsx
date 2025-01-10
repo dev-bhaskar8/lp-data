@@ -347,25 +347,29 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     const previousData = { analysisData, tokenData };
 
     try {
-      // Fetch market data with explicit price change intervals
+      // Fetch market data with all intervals
       const [info1, info2] = await Promise.all([
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`, {
+        fetchWithRetry(`${BASE_URL}/coins/${token1.id}`, {
+          vs_currency: 'usd',
           localization: false,
           tickers: false,
           community_data: false,
           developer_data: false,
           sparkline: false,
           market_data: true,
-          price_change_percentage: '24h,7d,30d,90d,1y'  // Explicitly request all intervals
+          include_24h_vol: true,
+          include_last_updated_at: true
         }),
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`, {
+        fetchWithRetry(`${BASE_URL}/coins/${token2.id}`, {
+          vs_currency: 'usd',
           localization: false,
           tickers: false,
           community_data: false,
           developer_data: false,
           sparkline: false,
           market_data: true,
-          price_change_percentage: '24h,7d,30d,90d,1y'  // Explicitly request all intervals
+          include_24h_vol: true,
+          include_last_updated_at: true
         })
       ]).catch(error => {
         console.error('Market data fetch error:', error);
@@ -383,14 +387,25 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         const marketData = data?.data?.market_data;
         if (!marketData) throw new Error('Market data not available.');
         
+        // Log raw market data for debugging
+        console.log(`Raw market data for ${tokenSymbol}:`, marketData);
+        
         // Log price changes for debugging
-        console.log(`Price changes for ${tokenSymbol}:`, {
+        const priceChanges = {
           '24h': marketData.price_change_percentage_24h,
           '7d': marketData.price_change_percentage_7d,
           '30d': marketData.price_change_percentage_30d,
           '90d': marketData.price_change_percentage_90d,
           '1y': marketData.price_change_percentage_1y
-        });
+        };
+        
+        console.log(`Price changes for ${tokenSymbol}:`, priceChanges);
+        
+        // Validate 90d data specifically
+        if (priceChanges['90d'] === undefined || priceChanges['90d'] === null) {
+          console.warn(`90d price change missing for ${tokenSymbol}, calculating from historical data...`);
+          return marketData;
+        }
         
         return marketData;
       };
@@ -401,23 +416,20 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       // Add delay before fetching historical data
       await sleep(2000);
 
-      // Fetch historical data with longer delays and retries
+      // Fetch historical data for 90d calculation if needed
       const [data1, data2] = await Promise.all([
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
+        fetchWithRetry(`${BASE_URL}/coins/${token1.id}/market_chart`, {
           vs_currency: 'usd',
-          days: selectedTimeframe,
+          days: Math.max(selectedTimeframe, marketData1.price_change_percentage_90d ? 0 : 90),
           interval: 'daily'
         }, MAX_RETRIES, API_DELAY, true),
-        fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
+        fetchWithRetry(`${BASE_URL}/coins/${token2.id}/market_chart`, {
           vs_currency: 'usd',
-          days: selectedTimeframe,
+          days: Math.max(selectedTimeframe, marketData2.price_change_percentage_90d ? 0 : 90),
           interval: 'daily'
         }, MAX_RETRIES, API_DELAY, true)
       ]).catch(error => {
         console.error('Historical data fetch error:', error);
-        // Restore previous data on error
-        setAnalysisData(previousData.analysisData);
-        setTokenData(previousData.tokenData);
         if (error.response?.status === 429) {
           throw new Error('Rate limit exceeded. Please wait 30 seconds and try again.');
         } else if (error.message.includes('timeout')) {
@@ -427,44 +439,15 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }
       });
 
-      // Validate the data before processing
-      if (!data1.data?.prices?.length || !data2.data?.prices?.length) {
-        throw new Error('Invalid price data received. Please try again.');
-      }
-
-      // Extract prices and calculate percentage changes
-      const prices1 = data1.data.prices.map(p => p[1]);
-      const prices2 = data2.data.prices.map(p => p[1]);
-      const dates = data1.data.prices.map(p => new Date(p[0]).toLocaleDateString());
-
-      const changes1 = prices1.map((price, i) => 
-        i === 0 ? 0 : ((price - prices1[i-1]) / prices1[i-1]) * 100
-      );
-      const changes2 = prices2.map((price, i) => 
-        i === 0 ? 0 : ((price - prices2[i-1]) / prices2[i-1]) * 100
-      );
-
-      // Validate correlation data
-      if (!changes1.length || !changes2.length) {
-        throw new Error('Insufficient data for correlation analysis.');
-      }
-
-      // Calculate correlation
-      const correlation = calculateCorrelation(changes1, changes2);
-      if (isNaN(correlation)) {
-        throw new Error('Unable to calculate correlation. Please try different tokens.');
-      }
-
-      // Format market data
-      const formatMarketCap = (value) => {
-        if (!value && value !== 0) return 'N/A';
-        if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
-        if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-        if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-        return `$${value.toFixed(2)}`;
+      // Calculate 90d change if missing from market data
+      const calculate90dChange = (prices) => {
+        if (prices.length < 90) return null;
+        const startPrice = prices[0][1];
+        const endPrice = prices[prices.length - 1][1];
+        return ((endPrice - startPrice) / startPrice) * 100;
       };
 
-      // Store token data with null checks
+      // Store token data with calculated 90d changes if needed
       const newTokenData = {
         token1: {
           price: marketData1.current_price?.usd ?? 0,
@@ -473,7 +456,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: marketData1.price_change_percentage_24h ?? null,
           priceChange7d: marketData1.price_change_percentage_7d ?? null,
           priceChange30d: marketData1.price_change_percentage_30d ?? null,
-          priceChange90d: marketData1.price_change_percentage_90d ?? null,
+          priceChange90d: marketData1.price_change_percentage_90d ?? calculate90dChange(data1.data.prices),
           priceChange1y: marketData1.price_change_percentage_1y ?? null,
         },
         token2: {
@@ -483,7 +466,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: marketData2.price_change_percentage_24h ?? null,
           priceChange7d: marketData2.price_change_percentage_7d ?? null,
           priceChange30d: marketData2.price_change_percentage_30d ?? null,
-          priceChange90d: marketData2.price_change_percentage_90d ?? null,
+          priceChange90d: marketData2.price_change_percentage_90d ?? calculate90dChange(data2.data.prices),
           priceChange1y: marketData2.price_change_percentage_1y ?? null,
         }
       };
