@@ -290,6 +290,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     setSearchToken1(newValue);
     if (newValue.length >= 2) {
       fetchTokens(newValue);
+    } else {
+      setTokenOptions([]);
     }
   };
 
@@ -297,6 +299,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     setSearchToken2(newValue);
     if (newValue.length >= 2) {
       fetchTokens(newValue);
+    } else {
+      setTokenOptions([]);
     }
   };
 
@@ -512,7 +516,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   };
 
   const renderTokenStats = (token, data) => {
-    if (!data) return null;
+    if (!token || !data) return null;
 
     const renderPriceChange = (value, label) => (
       <Box>
@@ -563,6 +567,23 @@ export default function CustomPairsAnalysis({ open, onClose }) {
   // Update the Autocomplete components to use unique keys
   const getOptionKey = (option) => `${option.id}-${option.symbol}-${option.name}`;
 
+  // Update token change handlers to clear data when tokens are cleared
+  const handleToken1Change = (event, newValue) => {
+    setToken1(newValue);
+    if (!newValue) {
+      setTokenData(prev => ({ ...prev, token1: null }));
+      setAnalysisData(null);
+    }
+  };
+
+  const handleToken2Change = (event, newValue) => {
+    setToken2(newValue);
+    if (!newValue) {
+      setTokenData(prev => ({ ...prev, token2: null }));
+      setAnalysisData(null);
+    }
+  };
+
   return (
     <Dialog 
       open={open} 
@@ -582,12 +603,12 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Autocomplete
               value={token1}
-              onChange={(event, newValue) => setToken1(newValue)}
+              onChange={handleToken1Change}
               inputValue={searchToken1}
               onInputChange={(event, newInputValue) => handleSearchToken1(newInputValue)}
               options={filteredOptions1}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
+              getOptionLabel={(option) => `${option?.symbol?.toUpperCase()} - ${option?.name}`}
               renderOption={(props, option) => (
                 <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
@@ -604,7 +625,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 <TextField 
                   {...params} 
                   label="Search Token 1"
-                  placeholder="Enter token symbol..."
+                  placeholder="Type 2 or more characters..."
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
@@ -617,17 +638,17 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 />
               )}
               filterOptions={(x) => x}
-              noOptionsText={searchToken1.length < 2 ? "Type to search..." : "No tokens found"}
+              noOptionsText={searchToken1.length < 2 ? "Type 2 or more characters..." : "No tokens found"}
               sx={{ flex: 1 }}
             />
             <Autocomplete
               value={token2}
-              onChange={(event, newValue) => setToken2(newValue)}
+              onChange={handleToken2Change}
               inputValue={searchToken2}
               onInputChange={(event, newInputValue) => handleSearchToken2(newInputValue)}
               options={filteredOptions2}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
+              getOptionLabel={(option) => `${option?.symbol?.toUpperCase()} - ${option?.name}`}
               renderOption={(props, option) => (
                 <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
@@ -644,7 +665,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 <TextField 
                   {...params} 
                   label="Search Token 2"
-                  placeholder="Enter token symbol..."
+                  placeholder="Type 2 or more characters..."
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
@@ -657,7 +678,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 />
               )}
               filterOptions={(x) => x}
-              noOptionsText={searchToken2.length < 2 ? "Type to search..." : "No tokens found"}
+              noOptionsText={searchToken2.length < 2 ? "Type 2 or more characters..." : "No tokens found"}
               sx={{ flex: 1 }}
             />
             <FormControl sx={{ minWidth: 120 }}>
