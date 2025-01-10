@@ -80,6 +80,15 @@ const COINGECKO_API_KEY = (() => {
   return key;
 })();
 
+// Add formatMarketCap function at the top level
+const formatMarketCap = (value) => {
+  if (!value && value !== 0) return 'N/A';
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  return `$${value.toFixed(2)}`;
+};
+
 export default function CustomPairsAnalysis({ open, onClose }) {
   const [token1, setToken1] = useState(null);
   const [token2, setToken2] = useState(null);
@@ -347,7 +356,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     const previousData = { analysisData, tokenData };
 
     try {
-      // Fetch market data with all intervals
+      // Fetch market data first
       const [info1, info2] = await Promise.all([
         fetchWithRetry(`${BASE_URL}/coins/${token1.id}`, {
           vs_currency: 'usd',
@@ -382,50 +391,27 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }
       });
 
-      // Validate and log market data
-      const validateMarketData = (data, tokenSymbol) => {
-        const marketData = data?.data?.market_data;
-        if (!marketData) throw new Error('Market data not available.');
-        
-        // Log raw market data for debugging
-        console.log(`Raw market data for ${tokenSymbol}:`, marketData);
-        
-        // Log price changes for debugging
-        const priceChanges = {
-          '24h': marketData.price_change_percentage_24h,
-          '7d': marketData.price_change_percentage_7d,
-          '30d': marketData.price_change_percentage_30d,
-          '90d': marketData.price_change_percentage_90d,
-          '1y': marketData.price_change_percentage_1y
-        };
-        
-        console.log(`Price changes for ${tokenSymbol}:`, priceChanges);
-        
-        // Validate 90d data specifically
-        if (priceChanges['90d'] === undefined || priceChanges['90d'] === null) {
-          console.warn(`90d price change missing for ${tokenSymbol}, calculating from historical data...`);
-          return marketData;
-        }
-        
-        return marketData;
-      };
+      const marketData1 = info1?.data?.market_data;
+      const marketData2 = info2?.data?.market_data;
 
-      const marketData1 = validateMarketData(info1, token1.symbol);
-      const marketData2 = validateMarketData(info2, token2.symbol);
+      if (!marketData1 || !marketData2) {
+        throw new Error('Market data not available.');
+      }
 
       // Add delay before fetching historical data
       await sleep(2000);
 
-      // Fetch historical data for 90d calculation if needed
+      // Fetch historical data once with max days needed
+      const daysNeeded = Math.max(selectedTimeframe, 90); // Use 90 days for both correlation and price change
       const [data1, data2] = await Promise.all([
         fetchWithRetry(`${BASE_URL}/coins/${token1.id}/market_chart`, {
           vs_currency: 'usd',
-          days: Math.max(selectedTimeframe, marketData1.price_change_percentage_90d ? 0 : 90),
+          days: daysNeeded,
           interval: 'daily'
         }, MAX_RETRIES, API_DELAY, true),
         fetchWithRetry(`${BASE_URL}/coins/${token2.id}/market_chart`, {
           vs_currency: 'usd',
-          days: Math.max(selectedTimeframe, marketData2.price_change_percentage_90d ? 0 : 90),
+          days: daysNeeded,
           interval: 'daily'
         }, MAX_RETRIES, API_DELAY, true)
       ]).catch(error => {
@@ -439,15 +425,34 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }
       });
 
-      // Calculate 90d change if missing from market data
+      // Calculate 90d change from historical data
       const calculate90dChange = (prices) => {
-        if (prices.length < 90) return null;
+        if (!Array.isArray(prices) || prices.length < 90) return null;
         const startPrice = prices[0][1];
-        const endPrice = prices[prices.length - 1][1];
+        const endPrice = prices[89][1]; // Use exactly 90 days
         return ((endPrice - startPrice) / startPrice) * 100;
       };
 
-      // Store token data with calculated 90d changes if needed
+      // Extract prices and calculate daily changes for correlation
+      const prices1 = data1.data.prices.slice(-selectedTimeframe);
+      const prices2 = data2.data.prices.slice(-selectedTimeframe);
+      
+      const changes1 = prices1.map((price, i) => 
+        i === 0 ? 0 : ((price[1] - prices1[i-1][1]) / prices1[i-1][1]) * 100
+      );
+      const changes2 = prices2.map((price, i) => 
+        i === 0 ? 0 : ((price[1] - prices2[i-1][1]) / prices2[i-1][1]) * 100
+      );
+
+      // Calculate correlation
+      const correlation = calculateCorrelation(changes1, changes2);
+      if (isNaN(correlation)) {
+        throw new Error('Unable to calculate correlation. Please try different tokens.');
+      }
+
+      const dates = prices1.map(p => new Date(p[0]).toLocaleDateString());
+
+      // Store token data with calculated 90d changes
       const newTokenData = {
         token1: {
           price: marketData1.current_price?.usd ?? 0,
@@ -456,7 +461,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: marketData1.price_change_percentage_24h ?? null,
           priceChange7d: marketData1.price_change_percentage_7d ?? null,
           priceChange30d: marketData1.price_change_percentage_30d ?? null,
-          priceChange90d: marketData1.price_change_percentage_90d ?? calculate90dChange(data1.data.prices),
+          priceChange90d: calculate90dChange(data1.data.prices),
           priceChange1y: marketData1.price_change_percentage_1y ?? null,
         },
         token2: {
@@ -466,7 +471,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: marketData2.price_change_percentage_24h ?? null,
           priceChange7d: marketData2.price_change_percentage_7d ?? null,
           priceChange30d: marketData2.price_change_percentage_30d ?? null,
-          priceChange90d: marketData2.price_change_percentage_90d ?? calculate90dChange(data2.data.prices),
+          priceChange90d: calculate90dChange(data2.data.prices),
           priceChange1y: marketData2.price_change_percentage_1y ?? null,
         }
       };
