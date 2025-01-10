@@ -258,7 +258,17 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     
     setLoading(true);
     setError('');
+    // Don't clear previous data immediately
+    const previousData = { analysisData, tokenData };
+
     try {
+      // Validate market data helper
+      const validateMarketData = (data) => {
+        const marketData = data?.data?.market_data;
+        if (!marketData) throw new Error('Market data not available.');
+        return marketData;
+      };
+
       // Fetch market data first to ensure tokens are valid
       const [info1, info2] = await Promise.all([
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`, {
@@ -276,6 +286,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           sparkline: false
         })
       ]).catch(error => {
+        console.error('Market data fetch error:', error);
         if (error.response?.status === 429) {
           throw new Error('Rate limit exceeded. Please wait a moment and try again.');
         } else if (error.response?.status === 404) {
@@ -284,6 +295,10 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           throw new Error('Failed to fetch token data. Please try again.');
         }
       });
+
+      // Validate market data early
+      const marketData1 = validateMarketData(info1);
+      const marketData2 = validateMarketData(info2);
 
       // Add delay before fetching historical data
       await sleep(2000);
@@ -302,6 +317,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }, MAX_RETRIES, API_DELAY, true)
       ]).catch(error => {
         console.error('Historical data fetch error:', error);
+        // Restore previous data on error
+        setAnalysisData(previousData.analysisData);
+        setTokenData(previousData.tokenData);
         if (error.response?.status === 429) {
           throw new Error('Rate limit exceeded. Please wait 30 seconds and try again.');
         } else if (error.message.includes('timeout')) {
@@ -335,16 +353,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
 
       // Calculate correlation
       const correlation = calculateCorrelation(changes1, changes2);
-
-      // Validate market data
-      const validateMarketData = (data) => {
-        const marketData = data?.market_data;
-        if (!marketData) throw new Error('Market data not available.');
-        return marketData;
-      };
-
-      const marketData1 = validateMarketData(info1.data);
-      const marketData2 = validateMarketData(info2.data);
+      if (isNaN(correlation)) {
+        throw new Error('Unable to calculate correlation. Please try different tokens.');
+      }
 
       // Format market data
       const formatMarketCap = (value) => {
@@ -356,7 +367,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       };
 
       // Store token data with null checks
-      setTokenData({
+      const newTokenData = {
         token1: {
           price: marketData1.current_price?.usd ?? 0,
           marketCap: formatMarketCap(marketData1.market_cap?.usd),
@@ -377,9 +388,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange90d: marketData2.price_change_percentage_90d ?? null,
           priceChange1y: marketData2.price_change_percentage_1y ?? null,
         }
-      });
+      };
 
-      setAnalysisData({
+      const newAnalysisData = {
         correlation,
         chartData: {
           labels: dates,
@@ -398,9 +409,16 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             }
           ]
         }
-      });
+      };
+
+      // Update state only after all calculations are successful
+      setTokenData(newTokenData);
+      setAnalysisData(newAnalysisData);
     } catch (error) {
       console.error('Error analyzing tokens:', error);
+      // Keep previous data on error
+      setAnalysisData(previousData.analysisData);
+      setTokenData(previousData.tokenData);
       setError(error.message || 'Failed to analyze tokens. Please try again.');
     } finally {
       setLoading(false);
