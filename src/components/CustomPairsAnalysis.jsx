@@ -708,7 +708,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               },
               '&.Mui-disabled': {
                 bgcolor: 'rgba(59, 130, 246, 0.3)',
-              }
+              },
+              textTransform: 'none'
             }}
           >
             {loading ? <CircularProgress size={24} /> : 'Analyze'}
@@ -791,7 +792,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             color: '#fff',
             '&:hover': {
               bgcolor: 'rgba(255, 255, 255, 0.1)'
-            }
+            },
+            textTransform: 'none'
           }}
         >
           Close
