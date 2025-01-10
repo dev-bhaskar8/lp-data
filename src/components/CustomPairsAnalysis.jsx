@@ -55,8 +55,9 @@ const globalCache = {
 };
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-const API_DELAY = 1100; // 1.1 seconds between API calls
-const MAX_RETRIES = 3;
+const API_DELAY = 2000; // 2 seconds between API calls
+const MAX_RETRIES = 5;
+const HISTORICAL_DELAY = 3000; // 3 seconds for historical data
 
 export default function CustomPairsAnalysis({ open, onClose }) {
   const [token1, setToken1] = useState(null);
@@ -73,7 +74,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const fetchWithRetry = async (url, params = {}, retries = MAX_RETRIES, delay = 2000) => {
+  const fetchWithRetry = async (url, params = {}, retries = MAX_RETRIES, delay = API_DELAY, isHistorical = false) => {
     // Check cache first
     const cacheKey = url + JSON.stringify(params);
     const cached = globalCache.tokenData.get(cacheKey);
@@ -87,8 +88,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     const lastAnyFetch = Math.max(...Array.from(globalCache.lastFetch.values()));
     if (lastAnyFetch) {
       const timeSinceLastFetch = Date.now() - lastAnyFetch;
-      if (timeSinceLastFetch < API_DELAY) {
-        await sleep(API_DELAY - timeSinceLastFetch);
+      const requiredDelay = isHistorical ? HISTORICAL_DELAY : delay;
+      if (timeSinceLastFetch < requiredDelay) {
+        await sleep(requiredDelay - timeSinceLastFetch);
       }
     }
 
@@ -97,22 +99,47 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       try {
         const response = await axios.get(url, { 
           params,
-          timeout: 10000 // 10 second timeout
+          timeout: isHistorical ? 20000 : 10000 // Longer timeout for historical data
         });
+        
+        // Validate response data
+        if (!response.data) {
+          throw new Error('Empty response received');
+        }
+
         // Cache the response
         globalCache.tokenData.set(cacheKey, response.data);
         globalCache.lastFetch.set(cacheKey, Date.now());
+
+        // Add extra delay after successful historical data fetch
+        if (isHistorical) {
+          await sleep(HISTORICAL_DELAY);
+        }
+
         return response;
       } catch (error) {
         lastError = error;
+        console.error(`Attempt ${i + 1} failed:`, error.message);
+        
         if (error.response?.status === 429) {
-          const waitTime = delay * Math.pow(2, i); // Exponential backoff
+          const waitTime = (isHistorical ? HISTORICAL_DELAY : delay) * Math.pow(2, i); // Exponential backoff
+          console.log(`Rate limited. Waiting ${waitTime}ms before retry...`);
           await sleep(waitTime);
           continue;
         }
+        
         if (error.code === 'ECONNABORTED') {
-          throw new Error('Request timed out. Please try again.');
+          throw new Error(isHistorical ? 
+            'Historical data request timed out. Please try again.' : 
+            'Request timed out. Please try again.');
         }
+        
+        // For historical data, try one more time with a longer delay
+        if (isHistorical && i === retries - 2) {
+          await sleep(5000); // 5 second delay before last attempt
+          continue;
+        }
+        
         throw error;
       }
     }
@@ -258,23 +285,29 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }
       });
 
-      // After successful market data fetch, get historical data
+      // Add delay before fetching historical data
+      await sleep(2000);
+
+      // Fetch historical data with longer delays and retries
       const [data1, data2] = await Promise.all([
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}/market_chart`, {
           vs_currency: 'usd',
           days: selectedTimeframe,
           interval: 'daily'
-        }),
+        }, MAX_RETRIES, API_DELAY, true),
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}/market_chart`, {
           vs_currency: 'usd',
           days: selectedTimeframe,
           interval: 'daily'
-        })
+        }, MAX_RETRIES, API_DELAY, true)
       ]).catch(error => {
+        console.error('Historical data fetch error:', error);
         if (error.response?.status === 429) {
-          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          throw new Error('Rate limit exceeded. Please wait 30 seconds and try again.');
+        } else if (error.message.includes('timeout')) {
+          throw new Error('Historical data request timed out. Please try again.');
         } else {
-          throw new Error('Failed to fetch historical data. Please try again.');
+          throw new Error('Failed to fetch historical data. Please try again in a moment.');
         }
       });
 
