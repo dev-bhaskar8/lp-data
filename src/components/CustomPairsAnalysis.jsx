@@ -222,61 +222,58 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     }
   };
 
-  // Only fetch tokens when search input changes and has at least 2 characters
+  // Update the fetchTokens function to be more efficient
   const fetchTokens = async (searchText) => {
     if (!searchText || searchText.length < 2) return;
     
+    // Use cached tokens if available and search is short
     if (globalCache.tokens) {
       setTokenOptions(globalCache.tokens);
       return;
     }
 
-    setLoadingTokens(true);
-    setError('');
-    
-    try {
-      // Fetch both token list and top tokens by volume
-      const [listResponse, topTokensResponse] = await Promise.all([
-        fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
-          include_platform: false
-        }),
-        fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
+    // Debounce the API call
+    if (globalCache.searchTimeout) {
+      clearTimeout(globalCache.searchTimeout);
+    }
+
+    // Wait 500ms before making API call to avoid rapid requests
+    globalCache.searchTimeout = setTimeout(async () => {
+      setLoadingTokens(true);
+      setError('');
+      
+      try {
+        // Only fetch top tokens by volume first
+        const topTokensResponse = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
           vs_currency: 'usd',
           order: 'volume_desc',
           per_page: 250,
           sparkline: false
-        })
-      ]);
-      
-      if (listResponse.data && Array.isArray(listResponse.data)) {
-        // Create a map of top tokens by volume
-        const topTokensMap = new Map(
-          topTokensResponse.data.map(token => [token.id, token.total_volume])
-        );
+        });
+        
+        if (topTokensResponse.data && Array.isArray(topTokensResponse.data)) {
+          // Process top tokens
+          const topTokens = topTokensResponse.data.map(token => ({
+            id: token.id,
+            symbol: token.symbol,
+            name: token.name,
+            volume: token.total_volume || 0
+          }));
 
-        // Enhance token list with volume data
-        const enhancedTokens = listResponse.data.map(token => ({
-          ...token,
-          volume: topTokensMap.get(token.id) || 0
-        }));
-
-        globalCache.tokens = enhancedTokens;
-        setTokenOptions(enhancedTokens);
-      } else {
-        throw new Error('Invalid response format');
+          globalCache.tokens = topTokens;
+          setTokenOptions(topTokens);
+        }
+      } catch (error) {
+        console.error('Error fetching tokens:', error);
+        if (error.response?.status === 429) {
+          setError('Rate limit reached. Please wait a moment and try again.');
+        } else {
+          setError('Failed to fetch token list. Please try again.');
+        }
+      } finally {
+        setLoadingTokens(false);
       }
-    } catch (error) {
-      console.error('Error fetching tokens:', error);
-      if (error.response?.status === 429) {
-        setError('Rate limit reached. Please wait a moment and try again.');
-      } else if (error.code === 'ECONNABORTED') {
-        setError('Request timed out. Please try again.');
-      } else {
-        setError('Failed to fetch token list. Please try again.');
-      }
-    } finally {
-      setLoadingTokens(false);
-    }
+    }, 500);
   };
 
   // Update search handlers to trigger token fetch
@@ -350,7 +347,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     const previousData = { analysisData, tokenData };
 
     try {
-      // Fetch market data first to ensure tokens are valid
+      // Fetch market data with explicit price change intervals
       const [info1, info2] = await Promise.all([
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`, {
           localization: false,
@@ -358,7 +355,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           community_data: false,
           developer_data: false,
           sparkline: false,
-          market_data: true // Explicitly request market data
+          market_data: true,
+          price_change_percentage: '24h,7d,30d,90d,1y'  // Explicitly request all intervals
         }),
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`, {
           localization: false,
@@ -366,7 +364,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           community_data: false,
           developer_data: false,
           sparkline: false,
-          market_data: true // Explicitly request market data
+          market_data: true,
+          price_change_percentage: '24h,7d,30d,90d,1y'  // Explicitly request all intervals
         })
       ]).catch(error => {
         console.error('Market data fetch error:', error);
