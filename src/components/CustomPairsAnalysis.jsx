@@ -69,10 +69,10 @@ const COINGECKO_API_KEY = (() => {
   }
 
   // Try both environment variable formats
-  const key = import.meta.env.VITE_COINGECKO_API_KEY || import.meta.env.COINGECKO_API_KEY;
+  const key = import.meta.env.VITE_COINGECKO_API_KEY;
   
   if (!key) {
-    console.warn('CoinGecko API key not found. Please check your .env file has COINGECKO_API_KEY or VITE_COINGECKO_API_KEY set.');
+    console.warn('CoinGecko API key not found. Please check your .env file has VITE_COINGECKO_API_KEY set.');
     return null;
   }
 
@@ -347,17 +347,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     
     setLoading(true);
     setError('');
-    // Don't clear previous data immediately
     const previousData = { analysisData, tokenData };
 
     try {
-      // Validate market data helper
-      const validateMarketData = (data) => {
-        const marketData = data?.data?.market_data;
-        if (!marketData) throw new Error('Market data not available.');
-        return marketData;
-      };
-
       // Fetch market data first to ensure tokens are valid
       const [info1, info2] = await Promise.all([
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token1.id}`, {
@@ -365,14 +357,16 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           tickers: false,
           community_data: false,
           developer_data: false,
-          sparkline: false
+          sparkline: false,
+          market_data: true // Explicitly request market data
         }),
         fetchWithRetry(`https://api.coingecko.com/api/v3/coins/${token2.id}`, {
           localization: false,
           tickers: false,
           community_data: false,
           developer_data: false,
-          sparkline: false
+          sparkline: false,
+          market_data: true // Explicitly request market data
         })
       ]).catch(error => {
         console.error('Market data fetch error:', error);
@@ -385,9 +379,25 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         }
       });
 
-      // Validate market data early
-      const marketData1 = validateMarketData(info1);
-      const marketData2 = validateMarketData(info2);
+      // Validate and log market data
+      const validateMarketData = (data, tokenSymbol) => {
+        const marketData = data?.data?.market_data;
+        if (!marketData) throw new Error('Market data not available.');
+        
+        // Log price changes for debugging
+        console.log(`Price changes for ${tokenSymbol}:`, {
+          '24h': marketData.price_change_percentage_24h,
+          '7d': marketData.price_change_percentage_7d,
+          '30d': marketData.price_change_percentage_30d,
+          '90d': marketData.price_change_percentage_90d,
+          '1y': marketData.price_change_percentage_1y
+        });
+        
+        return marketData;
+      };
+
+      const marketData1 = validateMarketData(info1, token1.symbol);
+      const marketData2 = validateMarketData(info2, token2.symbol);
 
       // Add delay before fetching historical data
       await sleep(2000);
