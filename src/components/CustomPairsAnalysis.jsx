@@ -268,6 +268,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: info1.data.market_data.price_change_percentage_24h,
           priceChange7d: info1.data.market_data.price_change_percentage_7d,
           priceChange30d: info1.data.market_data.price_change_percentage_30d,
+          priceChange90d: info1.data.market_data.price_change_percentage_90d,
+          priceChange1y: info1.data.market_data.price_change_percentage_1y,
         },
         token2: {
           price: info2.data.market_data.current_price.usd,
@@ -276,6 +278,8 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           priceChange24h: info2.data.market_data.price_change_percentage_24h,
           priceChange7d: info2.data.market_data.price_change_percentage_7d,
           priceChange30d: info2.data.market_data.price_change_percentage_30d,
+          priceChange90d: info2.data.market_data.price_change_percentage_90d,
+          priceChange1y: info2.data.market_data.price_change_percentage_1y,
         }
       });
 
@@ -349,6 +353,18 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           <Typography variant="body2" color="#888">30d Change</Typography>
           <Typography sx={{ color: data.priceChange30d >= 0 ? '#4EC9B0' : '#F14C4C' }}>
             {data.priceChange30d?.toFixed(2)}%
+          </Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">90d Change</Typography>
+          <Typography sx={{ color: data.priceChange90d >= 0 ? '#4EC9B0' : '#F14C4C' }}>
+            {data.priceChange90d?.toFixed(2)}%
+          </Typography>
+        </Box>
+        <Box>
+          <Typography variant="body2" color="#888">1y Change</Typography>
+          <Typography sx={{ color: data.priceChange1y >= 0 ? '#4EC9B0' : '#F14C4C' }}>
+            {data.priceChange1y?.toFixed(2)}%
           </Typography>
         </Box>
       </Box>
