@@ -55,9 +55,10 @@ const globalCache = {
 };
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-const API_DELAY = 2000; // 2 seconds between API calls
-const MAX_RETRIES = 5;
-const HISTORICAL_DELAY = 3000; // 3 seconds for historical data
+const API_DELAY = 3000; // 3 seconds between API calls
+const MAX_RETRIES = 3;
+const HISTORICAL_DELAY = 5000; // 5 seconds for historical data
+const BASE_URL = 'https://api.coingecko.com/api/v3';
 
 const COINGECKO_API_KEY = import.meta.env.VITE_COINGECKO_API_KEY;
 
@@ -99,9 +100,17 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     let lastError;
     for (let i = 0; i < retries; i++) {
       try {
+        // Add delay between retries
+        if (i > 0) {
+          const retryDelay = isHistorical ? 
+            HISTORICAL_DELAY * Math.pow(2, i) : // Longer exponential backoff for historical
+            delay * Math.pow(1.5, i); // Shorter exponential backoff for other requests
+          await sleep(retryDelay);
+        }
+
         const response = await axios.get(url, { 
           params,
-          timeout: isHistorical ? 20000 : 10000, // Longer timeout for historical data
+          timeout: isHistorical ? 30000 : 10000, // 30 second timeout for historical
           headers: {
             'x-cg-demo-api-key': COINGECKO_API_KEY
           }
@@ -110,6 +119,11 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         // Validate response data
         if (!response.data) {
           throw new Error('Empty response received');
+        }
+
+        // For historical data, validate price data structure
+        if (isHistorical && (!response.data.prices || !Array.isArray(response.data.prices))) {
+          throw new Error('Invalid historical data format');
         }
 
         // Cache the response
@@ -124,13 +138,17 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         return response;
       } catch (error) {
         lastError = error;
-        console.error(`Attempt ${i + 1} failed:`, error.message);
+        console.error(`Attempt ${i + 1} failed for ${url}:`, error.message);
         
         if (error.response?.status === 429) {
-          const waitTime = (isHistorical ? HISTORICAL_DELAY : delay) * Math.pow(2, i); // Exponential backoff
+          const waitTime = (isHistorical ? HISTORICAL_DELAY : delay) * Math.pow(2, i);
           console.log(`Rate limited. Waiting ${waitTime}ms before retry...`);
           await sleep(waitTime);
           continue;
+        }
+
+        if (error.response?.status === 404) {
+          throw new Error('Token data not found. Please try different tokens.');
         }
         
         if (error.code === 'ECONNABORTED') {
@@ -138,17 +156,29 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             'Historical data request timed out. Please try again.' : 
             'Request timed out. Please try again.');
         }
+
+        // For network errors, retry
+        if (error.code === 'ERR_NETWORK') {
+          await sleep(delay * Math.pow(2, i));
+          continue;
+        }
         
         // For historical data, try one more time with a longer delay
         if (isHistorical && i === retries - 2) {
-          await sleep(5000); // 5 second delay before last attempt
+          await sleep(10000); // 10 second delay before last attempt
           continue;
         }
         
         throw error;
       }
     }
-    throw lastError;
+
+    // If we've exhausted all retries, throw a user-friendly error
+    if (isHistorical) {
+      throw new Error('Unable to fetch historical data after multiple attempts. Please try again in a few minutes.');
+    } else {
+      throw new Error('Request failed after multiple attempts. Please try again.');
+    }
   };
 
   // Update token list fetching
