@@ -60,7 +60,10 @@ const MAX_RETRIES = 3;
 const HISTORICAL_DELAY = 5000; // 5 seconds for historical data
 const BASE_URL = 'https://api.coingecko.com/api/v3';
 
-const COINGECKO_API_KEY = import.meta.env.COINGECKO_API_KEY;
+const COINGECKO_API_KEY = import.meta.env.VITE_COINGECKO_API_KEY;
+
+// Add debug logging for environment variables
+console.log('Available env variables:', import.meta.env);
 
 // Add validation and logging
 console.log('API Key available:', !!COINGECKO_API_KEY);
@@ -196,64 +199,77 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     }
   };
 
-  // Update token list fetching
-  useEffect(() => {
-    const fetchTokens = async () => {
-      if (globalCache.tokens) {
-        setTokenOptions(globalCache.tokens);
-        return;
-      }
+  // Only fetch tokens when search input changes and has at least 2 characters
+  const fetchTokens = async (searchText) => {
+    if (!searchText || searchText.length < 2) return;
+    
+    if (globalCache.tokens) {
+      setTokenOptions(globalCache.tokens);
+      return;
+    }
 
-      setLoadingTokens(true);
-      setError('');
+    setLoadingTokens(true);
+    setError('');
+    
+    try {
+      // Fetch both token list and top tokens by volume
+      const [listResponse, topTokensResponse] = await Promise.all([
+        fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
+          include_platform: false
+        }),
+        fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
+          vs_currency: 'usd',
+          order: 'volume_desc',
+          per_page: 250,
+          sparkline: false
+        })
+      ]);
       
-      try {
-        // Fetch both token list and top tokens by volume
-        const [listResponse, topTokensResponse] = await Promise.all([
-          fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
-            include_platform: false
-          }),
-          fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
-            vs_currency: 'usd',
-            order: 'volume_desc',
-            per_page: 250,
-            sparkline: false
-          })
-        ]);
-        
-        if (listResponse.data && Array.isArray(listResponse.data)) {
-          // Create a map of top tokens by volume
-          const topTokensMap = new Map(
-            topTokensResponse.data.map(token => [token.id, token.total_volume])
-          );
+      if (listResponse.data && Array.isArray(listResponse.data)) {
+        // Create a map of top tokens by volume
+        const topTokensMap = new Map(
+          topTokensResponse.data.map(token => [token.id, token.total_volume])
+        );
 
-          // Enhance token list with volume data
-          const enhancedTokens = listResponse.data.map(token => ({
-            ...token,
-            volume: topTokensMap.get(token.id) || 0
-          }));
+        // Enhance token list with volume data
+        const enhancedTokens = listResponse.data.map(token => ({
+          ...token,
+          volume: topTokensMap.get(token.id) || 0
+        }));
 
-          globalCache.tokens = enhancedTokens;
-          setTokenOptions(enhancedTokens);
-        } else {
-          throw new Error('Invalid response format');
-        }
-      } catch (error) {
-        console.error('Error fetching tokens:', error);
-        if (error.response?.status === 429) {
-          setError('Rate limit reached. Please wait a moment and refresh.');
-        } else if (error.code === 'ECONNABORTED') {
-          setError('Request timed out. Please refresh the page.');
-        } else {
-          setError('Failed to fetch token list. Please try again later.');
-        }
-      } finally {
-        setLoadingTokens(false);
+        globalCache.tokens = enhancedTokens;
+        setTokenOptions(enhancedTokens);
+      } else {
+        throw new Error('Invalid response format');
       }
-    };
+    } catch (error) {
+      console.error('Error fetching tokens:', error);
+      if (error.response?.status === 429) {
+        setError('Rate limit reached. Please wait a moment and try again.');
+      } else if (error.code === 'ECONNABORTED') {
+        setError('Request timed out. Please try again.');
+      } else {
+        setError('Failed to fetch token list. Please try again.');
+      }
+    } finally {
+      setLoadingTokens(false);
+    }
+  };
 
-    fetchTokens();
-  }, []);
+  // Update search handlers to trigger token fetch
+  const handleSearchToken1 = (newValue) => {
+    setSearchToken1(newValue);
+    if (newValue.length >= 2) {
+      fetchTokens(newValue);
+    }
+  };
+
+  const handleSearchToken2 = (newValue) => {
+    setSearchToken2(newValue);
+    if (newValue.length >= 2) {
+      fetchTokens(newValue);
+    }
+  };
 
   // Filter tokens based on search input
   const getFilteredOptions = (searchText) => {
@@ -548,7 +564,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               value={token1}
               onChange={(event, newValue) => setToken1(newValue)}
               inputValue={searchToken1}
-              onInputChange={(event, newInputValue) => setSearchToken1(newInputValue)}
+              onInputChange={(event, newInputValue) => handleSearchToken1(newInputValue)}
               options={filteredOptions1}
               loading={loadingTokens}
               getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
@@ -588,7 +604,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               value={token2}
               onChange={(event, newValue) => setToken2(newValue)}
               inputValue={searchToken2}
-              onInputChange={(event, newInputValue) => setSearchToken2(newInputValue)}
+              onInputChange={(event, newInputValue) => handleSearchToken2(newInputValue)}
               options={filteredOptions2}
               loading={loadingTokens}
               getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
