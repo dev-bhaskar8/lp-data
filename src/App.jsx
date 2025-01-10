@@ -368,7 +368,7 @@ function App({ baseUrl }) {
               textTransform: 'none'
             }}
           >
-            ✨✨✨ Custom Pairs
+            ✨ Custom Pairs
           </Button>
         </Box>
 
