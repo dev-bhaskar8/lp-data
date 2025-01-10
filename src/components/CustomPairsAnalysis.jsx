@@ -54,19 +54,19 @@ const globalCache = {
   lastFetch: new Map(),
 };
 
+// Move API key to top level constants
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const API_DELAY = 3000; // 3 seconds between API calls
 const MAX_RETRIES = 3;
 const HISTORICAL_DELAY = 5000; // 5 seconds for historical data
 const BASE_URL = 'https://api.coingecko.com/api/v3';
 
-const COINGECKO_API_KEY = import.meta.env.VITE_COINGECKO_API_KEY;
-
-// Add debug logging for environment variables
-console.log('Available env variables:', import.meta.env);
-
-// Add validation and logging
-console.log('API Key available:', !!COINGECKO_API_KEY);
+// Read API key once from environment
+const COINGECKO_API_KEY = (() => {
+  const key = import.meta.env.VITE_COINGECKO_API_KEY;
+  console.log('API Key available:', !!key);
+  return key;
+})();
 
 export default function CustomPairsAnalysis({ open, onClose }) {
   const [token1, setToken1] = useState(null);
