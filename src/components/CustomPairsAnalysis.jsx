@@ -625,7 +625,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 <TextField 
                   {...params} 
                   label="Search Token 1"
-                  placeholder="Type 2 or more characters..."
+                  placeholder="Search by symbol or name"
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
@@ -638,7 +638,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 />
               )}
               filterOptions={(x) => x}
-              noOptionsText={searchToken1.length < 2 ? "Type 2 or more characters..." : "No tokens found"}
+              noOptionsText={searchToken1.length < 2 ? "Enter token symbol or name" : "No results found"}
               sx={{ flex: 1 }}
             />
             <Autocomplete
@@ -665,7 +665,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 <TextField 
                   {...params} 
                   label="Search Token 2"
-                  placeholder="Type 2 or more characters..."
+                  placeholder="Search by symbol or name"
                   InputProps={{
                     ...params.InputProps,
                     endAdornment: (
@@ -678,7 +678,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
                 />
               )}
               filterOptions={(x) => x}
-              noOptionsText={searchToken2.length < 2 ? "Type 2 or more characters..." : "No tokens found"}
+              noOptionsText={searchToken2.length < 2 ? "Enter token symbol or name" : "No results found"}
               sx={{ flex: 1 }}
             />
             <FormControl sx={{ minWidth: 120 }}>
