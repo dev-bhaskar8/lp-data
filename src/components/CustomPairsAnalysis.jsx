@@ -486,13 +486,13 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           labels: dates,
           datasets: [
             {
-              label: token1.symbol.charAt(0).toUpperCase() + token1.symbol.slice(1).toLowerCase(),
+              label: token1.symbol.toUpperCase(),
               data: changes1,
               borderColor: 'rgb(75, 192, 192)',
               tension: 0.1
             },
             {
-              label: token2.symbol.charAt(0).toUpperCase() + token2.symbol.slice(1).toLowerCase(),
+              label: token2.symbol.toUpperCase(),
               data: changes2,
               borderColor: 'rgb(255, 99, 132)',
               tension: 0.1
@@ -541,7 +541,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         gap: 2
       }}>
         <Typography variant="h6" sx={{ gridColumn: '1/-1', mb: 1 }}>
-          {token.symbol.charAt(0).toUpperCase() + token.symbol.slice(1).toLowerCase()} Stats
+          {token.symbol.toUpperCase()} Stats
         </Typography>
         <Box>
           <Typography variant="body2" color="#888">Price</Typography>
@@ -608,12 +608,12 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onInputChange={(event, newInputValue) => handleSearchToken1(newInputValue)}
               options={filteredOptions1}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option?.symbol?.charAt(0).toUpperCase()}${option?.symbol?.slice(1).toLowerCase()} - ${option?.name}`}
+              getOptionLabel={(option) => `${option?.symbol?.toUpperCase()} - ${option?.name}`}
               renderOption={(props, option) => (
                 <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Typography component="span" sx={{ fontWeight: 'bold' }}>
-                      {option.symbol.charAt(0).toUpperCase() + option.symbol.slice(1).toLowerCase()}
+                      {option.symbol.toUpperCase()}
                     </Typography>
                     <Typography component="span" sx={{ fontSize: '0.8rem', color: '#888' }}>
                       {option.name}
@@ -648,12 +648,12 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               onInputChange={(event, newInputValue) => handleSearchToken2(newInputValue)}
               options={filteredOptions2}
               loading={loadingTokens}
-              getOptionLabel={(option) => `${option?.symbol?.charAt(0).toUpperCase()}${option?.symbol?.slice(1).toLowerCase()} - ${option?.name}`}
+              getOptionLabel={(option) => `${option?.symbol?.toUpperCase()} - ${option?.name}`}
               renderOption={(props, option) => (
                 <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Typography component="span" sx={{ fontWeight: 'bold' }}>
-                      {option.symbol.charAt(0).toUpperCase() + option.symbol.slice(1).toLowerCase()}
+                      {option.symbol.toUpperCase()}
                     </Typography>
                     <Typography component="span" sx={{ fontSize: '0.8rem', color: '#888' }}>
                       {option.name}
