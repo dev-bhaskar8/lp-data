@@ -65,7 +65,7 @@ const BASE_URL = 'https://api.coingecko.com/api/v3';
 const COINGECKO_API_KEY = (() => {
   const key = import.meta.env.COINGECKO_API_KEY;
   if (!key) {
-    console.warn('CoinGecko API key not found in .env file');
+    console.warn('CoinGecko API key not found in .env file. Using public API with lower rate limits.');
   } else {
     console.log('CoinGecko API key loaded successfully');
   }
@@ -119,13 +119,20 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           await sleep(retryDelay);
         }
 
+        // Check API key before each request
         const headers = {};
         if (COINGECKO_API_KEY) {
           headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
-          console.log('Using API key for request');
+          console.log('Using API key for request to:', url);
+        } else {
+          console.log('No API key available, using public API for:', url);
         }
 
-        const response = await axios.get(url, { 
+        // Add proxy to bypass CORS
+        const proxyUrl = 'https://api.coingecko.com';
+        const finalUrl = url.replace(proxyUrl, proxyUrl);
+
+        const response = await axios.get(finalUrl, { 
           params,
           timeout: isHistorical ? 30000 : 10000, // 30 second timeout for historical
           headers,
@@ -136,17 +143,19 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         
         // Validate response data
         if (!response.data) {
+          console.error('Empty response received from:', url);
           throw new Error('Empty response received');
         }
 
         // For historical data, validate price data structure
         if (isHistorical && (!response.data.prices || !Array.isArray(response.data.prices))) {
+          console.error('Invalid historical data format from:', url);
           throw new Error('Invalid historical data format');
         }
 
         // Cache the response
-        globalCache.tokenData.set(cacheKey, response.data);
-        globalCache.lastFetch.set(cacheKey, Date.now());
+        globalCache.tokenData.set(url + JSON.stringify(params), response.data);
+        globalCache.lastFetch.set(url + JSON.stringify(params), Date.now());
 
         // Add extra delay after successful historical data fetch
         if (isHistorical) {
@@ -175,10 +184,11 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             'Request timed out. Please try again.');
         }
 
-        // For network errors, use longer delays
+        // For network errors, use longer delays and check API key
         if (error.code === 'ERR_NETWORK') {
+          console.error('Network error details:', error);
           const networkRetryDelay = delay * Math.pow(3, i); // More aggressive backoff for network errors
-          console.log(`Network error. Waiting ${networkRetryDelay}ms before retry...`);
+          console.log(`Network error. Waiting ${networkRetryDelay}ms before retry... API Key present: ${!!COINGECKO_API_KEY}`);
           await sleep(networkRetryDelay);
           continue;
         }
