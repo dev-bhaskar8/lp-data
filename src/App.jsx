@@ -361,13 +361,14 @@ function App({ baseUrl }) {
             variant="contained"
             onClick={() => setCustomPairsOpen(true)}
             sx={{
-              backgroundColor: '#3B82F6',
+              bgcolor: '#3B82F6',
               '&:hover': {
-                backgroundColor: '#2563EB',
+                bgcolor: '#2563EB',
               },
+              textTransform: 'none'
             }}
           >
-            Custom Pairs
+            ✨✨✨ Custom Pairs
           </Button>
         </Box>
 
