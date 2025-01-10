@@ -60,7 +60,10 @@ const MAX_RETRIES = 3;
 const HISTORICAL_DELAY = 5000; // 5 seconds for historical data
 const BASE_URL = 'https://api.coingecko.com/api/v3';
 
-const COINGECKO_API_KEY = import.meta.env.VITE_COINGECKO_API_KEY;
+const COINGECKO_API_KEY = import.meta.env.COINGECKO_API_KEY;
+
+// Add validation and logging
+console.log('API Key available:', !!COINGECKO_API_KEY);
 
 export default function CustomPairsAnalysis({ open, onClose }) {
   const [token1, setToken1] = useState(null);
@@ -108,12 +111,15 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           await sleep(retryDelay);
         }
 
+        const headers = {};
+        if (COINGECKO_API_KEY) {
+          headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
+        }
+
         const response = await axios.get(url, { 
           params,
           timeout: isHistorical ? 30000 : 10000, // 30 second timeout for historical
-          headers: {
-            'x-cg-demo-api-key': COINGECKO_API_KEY
-          }
+          headers
         });
         
         // Validate response data
