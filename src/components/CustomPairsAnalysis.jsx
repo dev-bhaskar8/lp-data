@@ -481,7 +481,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     const renderPriceChange = (value, label) => (
       <Box>
         <Typography variant="body2" color="#888">{label}</Typography>
-        {value === 0 ? (
+        {value === null || value === undefined ? (
           <Typography color="#888">N/A</Typography>
         ) : (
           <Typography sx={{ color: value >= 0 ? '#4EC9B0' : '#F14C4C' }}>
@@ -505,15 +505,15 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         </Typography>
         <Box>
           <Typography variant="body2" color="#888">Price</Typography>
-          <Typography>${data.price.toLocaleString()}</Typography>
+          <Typography>${(data.price || 0).toLocaleString()}</Typography>
         </Box>
         <Box>
           <Typography variant="body2" color="#888">Market Cap</Typography>
-          <Typography>{data.marketCap}</Typography>
+          <Typography>{data.marketCap || 'N/A'}</Typography>
         </Box>
         <Box>
           <Typography variant="body2" color="#888">24h Volume</Typography>
-          <Typography>{data.volume24h}</Typography>
+          <Typography>{data.volume24h || 'N/A'}</Typography>
         </Box>
         {renderPriceChange(data.priceChange24h, "24h Change")}
         {renderPriceChange(data.priceChange7d, "7d Change")}
