@@ -108,6 +108,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           const retryDelay = isHistorical ? 
             HISTORICAL_DELAY * Math.pow(2, i) : // Longer exponential backoff for historical
             delay * Math.pow(1.5, i); // Shorter exponential backoff for other requests
+          console.log(`Retry ${i + 1} after ${retryDelay}ms delay...`);
           await sleep(retryDelay);
         }
 
@@ -119,7 +120,10 @@ export default function CustomPairsAnalysis({ open, onClose }) {
         const response = await axios.get(url, { 
           params,
           timeout: isHistorical ? 30000 : 10000, // 30 second timeout for historical
-          headers
+          headers,
+          validateStatus: function (status) {
+            return status >= 200 && status < 300; // Only accept success status codes
+          }
         });
         
         // Validate response data
@@ -163,27 +167,32 @@ export default function CustomPairsAnalysis({ open, onClose }) {
             'Request timed out. Please try again.');
         }
 
-        // For network errors, retry
+        // For network errors, use longer delays
         if (error.code === 'ERR_NETWORK') {
-          await sleep(delay * Math.pow(2, i));
+          const networkRetryDelay = delay * Math.pow(3, i); // More aggressive backoff for network errors
+          console.log(`Network error. Waiting ${networkRetryDelay}ms before retry...`);
+          await sleep(networkRetryDelay);
           continue;
         }
         
         // For historical data, try one more time with a longer delay
         if (isHistorical && i === retries - 2) {
+          console.log('Last attempt for historical data with extended delay...');
           await sleep(10000); // 10 second delay before last attempt
           continue;
         }
         
-        throw error;
+        if (i === retries - 1) {
+          throw new Error('Network connection error. Please check your internet connection and try again.');
+        }
       }
     }
 
     // If we've exhausted all retries, throw a user-friendly error
     if (isHistorical) {
-      throw new Error('Unable to fetch historical data after multiple attempts. Please try again in a few minutes.');
+      throw new Error('Unable to fetch historical data after multiple attempts. Please check your internet connection and try again.');
     } else {
-      throw new Error('Request failed after multiple attempts. Please try again.');
+      throw new Error('Request failed after multiple attempts. Please check your internet connection and try again.');
     }
   };
 
@@ -515,6 +524,9 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     );
   };
 
+  // Update the Autocomplete components to use unique keys
+  const getOptionKey = (option) => `${option.id}-${option.symbol}-${option.name}`;
+
   return (
     <Dialog 
       open={open} 
@@ -541,7 +553,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               loading={loadingTokens}
               getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
               renderOption={(props, option) => (
-                <li {...props}>
+                <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Typography component="span" sx={{ fontWeight: 'bold' }}>
                       {option.symbol.toUpperCase()}
@@ -581,7 +593,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
               loading={loadingTokens}
               getOptionLabel={(option) => `${option.symbol.toUpperCase()} - ${option.name}`}
               renderOption={(props, option) => (
-                <li {...props}>
+                <li {...props} key={getOptionKey(option)}>
                   <Box sx={{ display: 'flex', flexDirection: 'column' }}>
                     <Typography component="span" sx={{ fontWeight: 'bold' }}>
                       {option.symbol.toUpperCase()}
