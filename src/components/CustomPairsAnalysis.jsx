@@ -131,13 +131,33 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       setError('');
       
       try {
-        const response = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
-          include_platform: false
-        });
+        // Fetch both token list and top tokens by volume
+        const [listResponse, topTokensResponse] = await Promise.all([
+          fetchWithRetry('https://api.coingecko.com/api/v3/coins/list', {
+            include_platform: false
+          }),
+          fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
+            vs_currency: 'usd',
+            order: 'volume_desc',
+            per_page: 250,
+            sparkline: false
+          })
+        ]);
         
-        if (response.data && Array.isArray(response.data)) {
-          globalCache.tokens = response.data;
-          setTokenOptions(response.data);
+        if (listResponse.data && Array.isArray(listResponse.data)) {
+          // Create a map of top tokens by volume
+          const topTokensMap = new Map(
+            topTokensResponse.data.map(token => [token.id, token.total_volume])
+          );
+
+          // Enhance token list with volume data
+          const enhancedTokens = listResponse.data.map(token => ({
+            ...token,
+            volume: topTokensMap.get(token.id) || 0
+          }));
+
+          globalCache.tokens = enhancedTokens;
+          setTokenOptions(enhancedTokens);
         } else {
           throw new Error('Invalid response format');
         }
@@ -163,22 +183,22 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     if (!searchText) return [];
     const lowerSearch = searchText.toLowerCase();
 
-    // First, find exact symbol matches and prioritize by length
+    // First, find exact symbol matches and prioritize by volume
     const exactSymbolMatches = tokenOptions.filter(token => 
       token.symbol.toLowerCase() === lowerSearch
-    ).sort((a, b) => a.symbol.length - b.symbol.length);
+    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
 
-    // Then, find partial symbol matches and prioritize by length
+    // Then, find partial symbol matches and prioritize by volume
     const partialSymbolMatches = tokenOptions.filter(token => 
       token.symbol.toLowerCase().includes(lowerSearch) &&
       token.symbol.toLowerCase() !== lowerSearch
-    ).sort((a, b) => a.symbol.length - b.symbol.length);
+    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
 
-    // Finally, find name matches for remaining tokens
+    // Finally, find name matches and prioritize by volume
     const nameMatches = tokenOptions.filter(token => 
       token.name.toLowerCase().includes(lowerSearch) &&
       !token.symbol.toLowerCase().includes(lowerSearch)
-    );
+    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
 
     // Combine all matches with priority order
     return [...exactSymbolMatches, ...partialSymbolMatches, ...nameMatches].slice(0, 100);
