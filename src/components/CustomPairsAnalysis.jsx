@@ -112,7 +112,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
           params,
           timeout: isHistorical ? 30000 : 10000, // 30 second timeout for historical
           headers: {
-            'x-cg-demo-api-key': COINGECKO_API_KEY
+            'x-cg-pro-api-key': COINGECKO_API_KEY
           }
         });
         
