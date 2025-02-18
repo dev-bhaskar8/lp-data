@@ -237,6 +237,7 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     
     // Use cached tokens if available and search is short
     if (globalCache.tokens) {
+      console.log(`Using cached tokens (${globalCache.tokens.length} tokens available)`);
       setTokenOptions(globalCache.tokens);
       return;
     }
@@ -252,24 +253,27 @@ export default function CustomPairsAnalysis({ open, onClose }) {
       setError('');
       
       try {
-        // Only fetch top tokens by volume first
+        // Fetch more tokens, up to 1000
         const topTokensResponse = await fetchWithRetry('https://api.coingecko.com/api/v3/coins/markets', {
           vs_currency: 'usd',
-          order: 'volume_desc',
-          per_page: 250,
+          order: 'market_cap_desc', // Changed to market cap for better coverage
+          per_page: 1000,
           sparkline: false
         });
         
         if (topTokensResponse.data && Array.isArray(topTokensResponse.data)) {
+          console.log(`Fetched ${topTokensResponse.data.length} tokens from API`);
           // Process top tokens
           const topTokens = topTokensResponse.data.map(token => ({
             id: token.id,
-            symbol: token.symbol,
+            symbol: token.symbol.toLowerCase(), // Store lowercase for easier comparison
             name: token.name,
+            market_cap: token.market_cap || 0,
             volume: token.total_volume || 0
           }));
 
           globalCache.tokens = topTokens;
+          console.log('Updated token cache with new data');
           setTokenOptions(topTokens);
         }
       } catch (error) {
@@ -304,30 +308,37 @@ export default function CustomPairsAnalysis({ open, onClose }) {
     }
   };
 
-  // Filter tokens based on search input
+  // Update the filtering logic to be more inclusive
   const getFilteredOptions = (searchText) => {
     if (!searchText) return [];
     const lowerSearch = searchText.toLowerCase();
+    console.log(`Filtering tokens for search: "${lowerSearch}"`);
 
-    // First, find exact symbol matches and prioritize by volume
-    const exactSymbolMatches = tokenOptions.filter(token => 
-      token.symbol.toLowerCase() === lowerSearch
-    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
+    // First, find exact matches (symbol or name)
+    const exactMatches = tokenOptions.filter(token => 
+      token.symbol === lowerSearch ||
+      token.name.toLowerCase() === lowerSearch
+    );
 
-    // Then, find partial symbol matches and prioritize by volume
-    const partialSymbolMatches = tokenOptions.filter(token => 
-      token.symbol.toLowerCase().includes(lowerSearch) &&
-      token.symbol.toLowerCase() !== lowerSearch
-    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
+    // Then, find partial matches
+    const partialMatches = tokenOptions.filter(token => 
+      (token.symbol.includes(lowerSearch) || 
+       token.name.toLowerCase().includes(lowerSearch)) &&
+      !exactMatches.includes(token)
+    );
 
-    // Finally, find name matches and prioritize by volume
-    const nameMatches = tokenOptions.filter(token => 
-      token.name.toLowerCase().includes(lowerSearch) &&
-      !token.symbol.toLowerCase().includes(lowerSearch)
-    ).sort((a, b) => (b.volume || 0) - (a.volume || 0));
+    // Sort by market cap and volume
+    const sortedResults = [...exactMatches, ...partialMatches]
+      .sort((a, b) => {
+        // Prioritize market cap, then volume
+        if (a.market_cap !== b.market_cap) {
+          return b.market_cap - a.market_cap;
+        }
+        return b.volume - a.volume;
+      });
 
-    // Combine all matches with priority order
-    return [...exactSymbolMatches, ...partialSymbolMatches, ...nameMatches].slice(0, 100);
+    console.log(`Found ${sortedResults.length} matches for "${lowerSearch}"`);
+    return sortedResults.slice(0, 100);
   };
 
   // Memoize filtered options
